@@ -73,12 +73,10 @@ export function isSOLMarket(ticker: string): boolean {
  
  // Parse full Kalshi market response into SOLMarket
  export function parseKalshiFullMarket(m: KalshiFullMarketResponse): SOLMarket | null {
-   // Use close_time from API for accuracy
-   const closeTime = new Date(m.close_time);
-   
-   // Window end is the close time, start is 15 min before
-   const windowEnd = closeTime;
-   const windowStart = new Date(windowEnd.getTime() - 15 * 60 * 1000);
+  // Use open_time and close_time directly from API
+  const windowStart = new Date(m.open_time);
+  const windowEnd = new Date(m.close_time);
+  const closeTime = windowEnd;
    
    // Get strike from functional_strike or extract from title
   let strikePrice = 0;
@@ -99,7 +97,9 @@ export function isSOLMarket(ticker: string): boolean {
    // Determine direction from strike_type or title
    let direction: 'up' | 'down' = 'up';
    if (m.strike_type) {
-     direction = m.strike_type === 'greater' ? 'up' : 'down';
+    direction = (m.strike_type === 'greater' || m.strike_type === 'greater_or_equal') 
+      ? 'up' 
+      : 'down';
   } else if (m.floor_strike) {
     direction = 'up'; // floor_strike means price must go above
   } else if (m.cap_strike) {
