@@ -1,65 +1,38 @@
- import { kalshiRateLimiter } from './rate-limiter';
- import type { KalshiMarketResponse } from '@/types/sol-markets';
+ import type { KalshiMarketResponse, KalshiFullMarketResponse } from '@/types/sol-markets';
  
  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
  
- interface DomeMarketsResponse {
+ interface KalshiMarketsListResponse {
    markets: KalshiMarketResponse[];
-   pagination_key?: string;
+   cursor?: string;
  }
  
- interface DomeMarketPriceResponse {
-   market_ticker: string;
-   yes_bid?: number;
-   yes_ask?: number;
-   no_bid?: number;
-   no_ask?: number;
-   last_price?: number;
- }
- 
- export async function fetchKalshiMarkets(
-   status: 'open' | 'closed' = 'open',
-  limit: number = 100,
-  search?: string
- ): Promise<KalshiMarketResponse[]> {
-   await kalshiRateLimiter.waitAndAcquire();
- 
-   const params = new URLSearchParams({
-     endpoint: '/kalshi/markets',
-     status,
-     limit: limit.toString(),
-   });
-  
-  if (search) {
-    params.set('search', search);
-  }
- 
-   const response = await fetch(`${SUPABASE_URL}/functions/v1/dome-proxy?${params}`);
+ // Fetch all open KXSOL15M 15-minute contracts
+ export async function fetchKalshi15MinMarkets(): Promise<KalshiMarketResponse[]> {
+   const params = new URLSearchParams({ mode: 'list' });
+   const response = await fetch(`${SUPABASE_URL}/functions/v1/kalshi-markets?${params}`);
  
    if (!response.ok) {
      const error = await response.json();
      throw new Error(error.error || 'Failed to fetch markets');
    }
  
-   const data: DomeMarketsResponse = await response.json();
+   const data: KalshiMarketsListResponse = await response.json();
    return data.markets || [];
  }
  
- export async function fetchMarketPrice(ticker: string): Promise<DomeMarketPriceResponse> {
-   await kalshiRateLimiter.waitAndAcquire();
- 
-   const params = new URLSearchParams({
-     endpoint: `/kalshi/market-price/${ticker}`,
-   });
- 
-   const response = await fetch(`${SUPABASE_URL}/functions/v1/dome-proxy?${params}`);
+ // Fetch single market with full price data
+ export async function fetchKalshiMarket(ticker: string): Promise<KalshiFullMarketResponse> {
+   const params = new URLSearchParams({ mode: 'get', ticker });
+   const response = await fetch(`${SUPABASE_URL}/functions/v1/kalshi-markets?${params}`);
  
    if (!response.ok) {
      const error = await response.json();
      throw new Error(error.error || 'Failed to fetch market price');
    }
  
-   return response.json();
+   const data = await response.json();
+   return data.market;
  }
  
  // Fast mode for 1-second polling - only fetches current price
