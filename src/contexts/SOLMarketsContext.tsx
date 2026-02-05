@@ -1,6 +1,6 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData, PendingOrder } from '@/types/sol-markets';
- import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceWithHistory, fetchKalshiOrderbook } from '@/lib/kalshi-client';
+ import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchKalshiOrderbook } from '@/lib/kalshi-client';
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
@@ -245,23 +245,6 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
      }
    }, [state.selectedMarket]);
  
-   // Historical price fetch for initial load
-   const fetchSOLPriceHistorical = useCallback(async () => {
-     try {
-       const data = await fetchSOLPriceWithHistory();
-       if (data.price > 0) {
-         dispatch({ type: 'SET_CURRENT_PRICE', payload: data.price });
-         if (data.klines && data.klines.length > 0) {
-           dispatch({ type: 'SET_PRICE_HISTORY', payload: data.klines });
-         }
-         dispatch({ type: 'SET_LIVE', payload: true });
-       }
-     } catch (error) {
-       console.error('Failed to fetch historical SOL price:', error);
-       dispatch({ type: 'SET_LIVE', payload: false });
-     }
-   }, []);
- 
    // Check for contract expiry and auto-switch
    const checkContractExpiry = useCallback(() => {
      if (!lastContractEndRef.current) return;
@@ -270,9 +253,8 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
      if (now >= lastContractEndRef.current) {
        console.log('Contract expired, discovering new markets...');
        discoverMarkets(true);
-       fetchSOLPriceHistorical();
      }
-   }, [discoverMarkets, fetchSOLPriceHistorical]);
+  }, [discoverMarkets]);
  
    const selectSlot = useCallback((slot: TimeSlot) => {
      dispatch({ type: 'SELECT_SLOT', payload: slot });
@@ -293,7 +275,6 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
    // Initial load
    useEffect(() => {
      discoverMarkets(false);
-     fetchSOLPriceHistorical();
      initialLoadDoneRef.current = true;
    }, []);
  
