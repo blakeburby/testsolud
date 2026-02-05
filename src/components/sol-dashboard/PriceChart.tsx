@@ -1,4 +1,5 @@
- import { useSOLMarkets } from '@/contexts/SOLMarketsContext';
+import { useSOLMarkets } from '@/contexts/SOLMarketsContext';
+import { cn } from '@/lib/utils';
  import {
    ResponsiveContainer,
    LineChart,
@@ -13,7 +14,7 @@
  import { useMemo } from 'react';
  
  export function PriceChart() {
-   const { priceHistory, selectedMarket, selectedSlot, currentPrice } = useSOLMarkets();
+  const { priceHistory, selectedMarket, selectedSlot, currentPrice, wsConnected } = useSOLMarkets();
  
    const strikePrice = selectedMarket?.strikePrice ?? 0;
  
@@ -174,13 +175,19 @@
          </LineChart>
        </ResponsiveContainer>
        
-       {/* Live price indicator */}
-       {currentPrice && (
-         <div className="absolute bottom-4 right-4 flex items-center gap-1.5 text-xs">
-           <span className="h-2 w-2 rounded-full bg-trading-up animate-pulse" />
-           <span className="text-muted-foreground">Live</span>
-         </div>
-       )}
+        {/* WebSocket connection status */}
+        <div className="absolute bottom-4 right-4 flex items-center gap-1.5 text-xs">
+          <span className={cn(
+            "h-2 w-2 rounded-full",
+            wsConnected ? "bg-trading-up animate-pulse" : "bg-destructive"
+          )} />
+          <span className={cn(
+            "font-medium",
+            wsConnected ? "text-trading-up" : "text-destructive"
+          )}>
+            {wsConnected ? "LIVE" : "Disconnected"}
+          </span>
+        </div>
      </div>
    );
  }
