@@ -1,73 +1,146 @@
 
-# Remove REST Feed and CoinGecko/CoinPaprika Fallbacks
 
-This plan removes all REST-based price polling and third-party API fallbacks, making the Binance WebSocket the **sole source** of SOL price data.
+# Fix Binance WebSocket Connection Failures
 
----
+## Root Cause Analysis
 
-## Summary of Changes
+The WebSocket is failing with **error code 1006** ("Abnormal Closure"). Based on my investigation, this is caused by **geographic IP blocking** by Binance:
 
-### 1. Frontend Context (`src/contexts/SOLMarketsContext.tsx`)
+### Evidence
+- Console logs show repeated connection failures: `WebSocket error`, `WebSocket closed: 1006`
+- Error 1006 means the connection was terminated without a proper close handshake
+- The connection never reaches `onopen` - it fails during the handshake phase
+- Binance (`binance.com`) blocks connections from certain regions including the **United States**
 
-| Remove | Reason |
-|--------|--------|
-| `fetchSOLPriceHistorical` function (lines 248-263) | REST-based historical fetch no longer needed |
-| Import of `fetchSOLPriceWithHistory` from kalshi-client | No longer used |
-| Call to `fetchSOLPriceHistorical()` on initial load (line 296) | WebSocket now handles all price updates |
-| Call to `fetchSOLPriceHistorical()` in `checkContractExpiry` (lines 273-274) | Unnecessary with live WebSocket |
-
-**After removal**: The chart will start empty and populate as WebSocket trade data arrives. This is intentional - no stale/delayed data from REST sources.
-
----
-
-### 2. Frontend Client (`src/lib/kalshi-client.ts`)
-
-| Remove | Reason |
-|--------|--------|
-| `fetchSOLPriceQuick` function (lines 40-53) | Not used (already replaced by WebSocket) |
-| `fetchSOLPriceWithHistory` function (lines 55-86) | No longer called after context cleanup |
-
-**Keep**: The Kalshi market functions (`fetchKalshi15MinMarkets`, `fetchKalshiMarket`, `fetchKalshiOrderbook`) remain untouched - these are for prediction market data, not SOL price.
+### Current Implementation Issues
+1. **Direct browser connection** to `wss://stream.binance.com:9443` - this is blocked for US-based users
+2. **No server-side proxy** - the deleted `binance-price` edge function could have served as a relay
+3. **No fallback endpoint** - doesn't try `binance.us` for US users
 
 ---
 
-### 3. Edge Function (`supabase/functions/binance-price/index.ts`)
+## Solution: Server-Side WebSocket Proxy
 
-This edge function will be **deleted entirely** since it's no longer called by the frontend.
+Since direct browser connections to Binance are blocked, we need to create an edge function that:
+1. Connects to Binance WebSocket from the server (not blocked)
+2. Relays price updates to the frontend via Server-Sent Events (SSE) or polling
 
-**What it contained**:
-- Dome API integration
-- CoinGecko fallback (3 attempts with backoff)
-- CoinPaprika fallback
-- In-memory price cache
-- Historical data fetching
-
-All of this is now replaced by the direct Binance WebSocket connection in the browser.
+### Why Edge Function?
+- Edge functions run on Supabase infrastructure (not geo-blocked)
+- They can connect to Binance's WebSocket API directly
+- The frontend receives data via a stable HTTP connection
 
 ---
 
-## Files Modified
+## Implementation Plan
+
+### Step 1: Create `binance-ws-proxy` Edge Function
+
+Create a new edge function that:
+- Maintains a persistent WebSocket connection to Binance
+- Caches the latest trade price in memory
+- Serves GET requests with the current price
+- Handles the 24-hour WebSocket reconnection requirement
+
+```
+supabase/functions/binance-ws-proxy/index.ts
+```
+
+**Key features:**
+- Connect to `wss://stream.binance.com:9443/ws/solusdt@trade`
+- Parse trade messages and cache `{ price, timestamp }`
+- Expose `/functions/v1/binance-ws-proxy` endpoint
+- Automatic reconnection on disconnect
+
+### Step 2: Update Frontend Hook
+
+Modify `src/hooks/useBinanceWebSocket.ts` to:
+- Poll the edge function every 500ms instead of direct WebSocket
+- Maintain the same interface (`price`, `timestamp`, `isConnected`, `error`)
+- Use exponential backoff for failed requests
+
+### Step 3: Optimize for Real-Time Feel
+
+Since polling has inherent latency:
+- Poll at 500ms intervals (2 updates/sec)
+- Consider Server-Sent Events (SSE) for true real-time if needed later
+
+---
+
+## Files to Create/Modify
 
 | File | Action |
 |------|--------|
-| `src/contexts/SOLMarketsContext.tsx` | Remove REST fetch logic and imports |
-| `src/lib/kalshi-client.ts` | Remove unused price fetch functions |
-| `supabase/functions/binance-price/index.ts` | **Delete entire file** |
+| `supabase/functions/binance-ws-proxy/index.ts` | **Create** - Edge function that connects to Binance WebSocket and caches prices |
+| `src/hooks/useBinanceWebSocket.ts` | **Modify** - Change from direct WebSocket to polling the edge function |
 
 ---
 
-## Behavior After Changes
+## Technical Details
 
-- **On page load**: Chart starts empty, populates within milliseconds as WebSocket trades arrive
-- **Real-time updates**: Every Binance trade updates the chart immediately
-- **No fallbacks**: If WebSocket disconnects, the chart pauses until reconnection (connection status indicator already shows this)
-- **Contract expiry**: Markets refresh but price history builds from live WebSocket only
-- **No edge function calls**: Reduced latency, no API rate limits, no third-party dependencies
+### Edge Function (`binance-ws-proxy`)
+
+```typescript
+// Pseudocode structure
+let cachedPrice = { price: null, timestamp: null };
+let ws = null;
+
+function connectBinance() {
+  ws = new WebSocket('wss://stream.binance.com:9443/ws/solusdt@trade');
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    cachedPrice = { price: parseFloat(data.p), timestamp: data.T };
+  };
+  ws.onclose = () => setTimeout(connectBinance, 1000);
+}
+
+serve((req) => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) connectBinance();
+  return Response.json(cachedPrice);
+});
+```
+
+### Frontend Hook Changes
+
+```typescript
+// Change from WebSocket to polling
+useEffect(() => {
+  const pollPrice = async () => {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/binance-ws-proxy`);
+      const data = await response.json();
+      if (data.price) {
+        setState({ price: data.price, timestamp: data.timestamp, isConnected: true, error: null });
+      }
+    } catch (error) {
+      setState(prev => ({ ...prev, error: 'Connection error', isConnected: false }));
+    }
+  };
+  
+  pollPrice(); // Initial fetch
+  const interval = setInterval(pollPrice, 500); // Poll every 500ms
+  return () => clearInterval(interval);
+}, []);
+```
 
 ---
 
-## Technical Notes
+## Expected Outcome
 
-- The WebSocket provides ~20+ updates per second during active trading
-- Historical seeding is removed by design - users see live data from the moment they load the page
-- If historical context is needed in the future, Binance's REST klines API could be added directly (but per your requirement, we're removing all REST)
+After implementation:
+- Price updates will work regardless of user location
+- Chart will update ~2x per second (500ms polling)
+- Connection status indicator will show "LIVE" when receiving data
+- No more 1006 WebSocket errors in console
+- Resilient to temporary network issues with automatic retry
+
+---
+
+## Alternative Approaches Considered
+
+1. **Use binance.us endpoint** - Only works for US users, fails elsewhere
+2. **CORS proxy** - Adds latency, potential single point of failure
+3. **Server-Sent Events (SSE)** - More complex, could be added later for true real-time
+
+The edge function approach is the most reliable solution that works globally.
+
