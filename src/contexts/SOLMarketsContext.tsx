@@ -363,7 +363,8 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
  
    // Market price polling (every 1s for real-time odds)
    useEffect(() => {
-     if (state.selectedMarket) {
+      // Skip polling for synthetic markets entirely
+      if (state.selectedMarket && !state.selectedMarket.ticker.startsWith('SYNTHETIC-')) {
        fetchSelectedMarketPrice();
        priceIntervalRef.current = window.setInterval(fetchSelectedMarketPrice, 1000);
      }
