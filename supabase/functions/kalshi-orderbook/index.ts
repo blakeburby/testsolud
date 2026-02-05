@@ -100,7 +100,7 @@
  async function fetchWithRetry(
    url: string,
    options: RequestInit,
-   maxRetries = 3
+  maxRetries = 5
  ): Promise<Response> {
    let lastError: Error | null = null;
  
@@ -111,7 +111,10 @@
        // Only retry on 5xx errors
        if (response.status >= 500) {
          lastError = new Error(`Server error: ${response.status}`);
-         const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+        // Add jitter to avoid thundering herd
+        const baseDelay = Math.pow(2, attempt) * 500;
+        const jitter = Math.random() * 500;
+        const delay = baseDelay + jitter;
          console.log(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
          await new Promise((r) => setTimeout(r, delay));
          continue;
@@ -120,7 +123,9 @@
        return response;
      } catch (error) {
        lastError = error instanceof Error ? error : new Error(String(error));
-       const delay = Math.pow(2, attempt) * 1000;
+      const baseDelay = Math.pow(2, attempt) * 500;
+      const jitter = Math.random() * 500;
+      const delay = baseDelay + jitter;
        console.log(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms due to: ${lastError.message}`);
        await new Promise((r) => setTimeout(r, delay));
      }
@@ -324,15 +329,29 @@
        status: 200,
        headers: { ...corsHeaders, "Content-Type": "application/json" },
      });
-   } catch (error) {
+  } catch (error) {
      console.error("Kalshi orderbook error:", error);
-     const errorMessage = error instanceof Error ? error.message : "Internal server error";
-     return new Response(
-       JSON.stringify({ error: errorMessage }),
-       {
-         status: 500,
-         headers: { ...corsHeaders, "Content-Type": "application/json" },
-       }
-     );
+    
+    // Return empty orderbook instead of error - allows UI to remain functional
+    const url = new URL(req.url);
+    const ticker = url.searchParams.get("ticker") || "unknown";
+    
+    const emptyResult = {
+      ticker,
+      yesBids: [],
+      yesAsks: [],
+      noBids: [],
+      noAsks: [],
+      lastPrice: null,
+      spread: null,
+      totalVolume: 0,
+      lastUpdated: new Date().toISOString(),
+      error: "Kalshi API temporarily unavailable",
    }
+
+    return new Response(JSON.stringify(emptyResult), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
  });
