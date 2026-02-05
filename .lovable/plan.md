@@ -1,146 +1,155 @@
 
 
-# Fix Binance WebSocket Connection Failures
+# Switch to Kraken WebSocket v2 for Real-Time SOL/USD Pricing
 
-## Root Cause Analysis
+## Overview
 
-The WebSocket is failing with **error code 1006** ("Abnormal Closure"). Based on my investigation, this is caused by **geographic IP blocking** by Binance:
-
-### Evidence
-- Console logs show repeated connection failures: `WebSocket error`, `WebSocket closed: 1006`
-- Error 1006 means the connection was terminated without a proper close handshake
-- The connection never reaches `onopen` - it fails during the handshake phase
-- Binance (`binance.com`) blocks connections from certain regions including the **United States**
-
-### Current Implementation Issues
-1. **Direct browser connection** to `wss://stream.binance.com:9443` - this is blocked for US-based users
-2. **No server-side proxy** - the deleted `binance-price` edge function could have served as a relay
-3. **No fallback endpoint** - doesn't try `binance.us` for US users
+Replace the current REST API polling approach with a direct WebSocket connection to Kraken's Public WebSocket v2 API. This will provide sub-second trade updates with minimum latency for the real-time trading dashboard.
 
 ---
 
-## Solution: Server-Side WebSocket Proxy
+## Architecture Decision
 
-Since direct browser connections to Binance are blocked, we need to create an edge function that:
-1. Connects to Binance WebSocket from the server (not blocked)
-2. Relays price updates to the frontend via Server-Sent Events (SSE) or polling
+### Direct Browser WebSocket vs Edge Function Proxy
 
-### Why Edge Function?
-- Edge functions run on Supabase infrastructure (not geo-blocked)
-- They can connect to Binance's WebSocket API directly
-- The frontend receives data via a stable HTTP connection
+Since Kraken's public WebSocket API:
+- Has no geo-restrictions (unlike Binance)
+- Requires no API key
+- Is designed for public access
+
+We will implement a **direct browser WebSocket connection** to `wss://ws.kraken.com/v2`. This eliminates the 500ms polling latency and provides true real-time updates.
 
 ---
 
 ## Implementation Plan
 
-### Step 1: Create `binance-ws-proxy` Edge Function
+### Step 1: Create New Hook - `useKrakenWebSocket.ts`
 
-Create a new edge function that:
-- Maintains a persistent WebSocket connection to Binance
-- Caches the latest trade price in memory
-- Serves GET requests with the current price
-- Handles the 24-hour WebSocket reconnection requirement
+Replace `useBinanceWebSocket.ts` with a new Kraken-specific WebSocket implementation.
 
+**File:** `src/hooks/useKrakenWebSocket.ts`
+
+**Features:**
+- Connect to `wss://ws.kraken.com/v2`
+- Subscribe to `trades` channel for `SOL/USD`
+- Parse trade messages and extract price/timestamp
+- Exponential backoff reconnection logic
+- Connection status tracking
+
+**Subscription Payload:**
+```json
+{
+  "method": "subscribe",
+  "params": {
+    "channel": "trade",
+    "symbol": ["SOL/USD"]
+  }
+}
 ```
-supabase/functions/binance-ws-proxy/index.ts
-```
 
-**Key features:**
-- Connect to `wss://stream.binance.com:9443/ws/solusdt@trade`
-- Parse trade messages and cache `{ price, timestamp }`
-- Expose `/functions/v1/binance-ws-proxy` endpoint
-- Automatic reconnection on disconnect
+**Message Handling:**
+- Ignore `heartbeat` and `status` messages
+- Parse trade updates: extract `price` and `timestamp` from trade data
+- Update state on every trade for maximum freshness
 
-### Step 2: Update Frontend Hook
+### Step 2: Update Context to Use New Hook
 
-Modify `src/hooks/useBinanceWebSocket.ts` to:
-- Poll the edge function every 500ms instead of direct WebSocket
-- Maintain the same interface (`price`, `timestamp`, `isConnected`, `error`)
-- Use exponential backoff for failed requests
+**File:** `src/contexts/SOLMarketsContext.tsx`
 
-### Step 3: Optimize for Real-Time Feel
+- Replace `useBinanceWebSocket` import with `useKrakenWebSocket`
+- Update the hook call to use the new naming
+- Keep the same interface: `{ price, timestamp, isConnected, error }`
 
-Since polling has inherent latency:
-- Poll at 500ms intervals (2 updates/sec)
-- Consider Server-Sent Events (SSE) for true real-time if needed later
+### Step 3: Delete or Deprecate Edge Function
 
----
+**File:** `supabase/functions/binance-ws-proxy/index.ts`
 
-## Files to Create/Modify
+- Remove or mark as deprecated since we no longer need server-side price fetching
+- The frontend connects directly to Kraken WebSocket
 
-| File | Action |
-|------|--------|
-| `supabase/functions/binance-ws-proxy/index.ts` | **Create** - Edge function that connects to Binance WebSocket and caches prices |
-| `src/hooks/useBinanceWebSocket.ts` | **Modify** - Change from direct WebSocket to polling the edge function |
+### Step 4: Clean Up Old Hook
+
+**File:** `src/hooks/useBinanceWebSocket.ts`
+
+- Delete this file as it's replaced by `useKrakenWebSocket.ts`
 
 ---
 
 ## Technical Details
 
-### Edge Function (`binance-ws-proxy`)
+### Kraken WebSocket v2 Trade Message Format
 
-```typescript
-// Pseudocode structure
-let cachedPrice = { price: null, timestamp: null };
-let ws = null;
-
-function connectBinance() {
-  ws = new WebSocket('wss://stream.binance.com:9443/ws/solusdt@trade');
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    cachedPrice = { price: parseFloat(data.p), timestamp: data.T };
-  };
-  ws.onclose = () => setTimeout(connectBinance, 1000);
-}
-
-serve((req) => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) connectBinance();
-  return Response.json(cachedPrice);
-});
-```
-
-### Frontend Hook Changes
-
-```typescript
-// Change from WebSocket to polling
-useEffect(() => {
-  const pollPrice = async () => {
-    try {
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/binance-ws-proxy`);
-      const data = await response.json();
-      if (data.price) {
-        setState({ price: data.price, timestamp: data.timestamp, isConnected: true, error: null });
-      }
-    } catch (error) {
-      setState(prev => ({ ...prev, error: 'Connection error', isConnected: false }));
+```json
+{
+  "channel": "trade",
+  "type": "update",
+  "data": [
+    {
+      "symbol": "SOL/USD",
+      "side": "buy",
+      "price": 91.06,
+      "qty": 10.5,
+      "ord_type": "limit",
+      "trade_id": 123456,
+      "timestamp": "2025-02-05T12:34:56.789Z"
     }
-  };
-  
-  pollPrice(); // Initial fetch
-  const interval = setInterval(pollPrice, 500); // Poll every 500ms
-  return () => clearInterval(interval);
-}, []);
+  ]
+}
 ```
+
+### Reconnection Strategy
+
+```text
+Attempt 1: Wait 1 second
+Attempt 2: Wait 2 seconds
+Attempt 3: Wait 4 seconds
+Attempt 4: Wait 8 seconds
+Max wait: 30 seconds
+```
+
+### State Interface (unchanged)
+
+```typescript
+interface WebSocketState {
+  price: number | null;
+  timestamp: number | null;
+  isConnected: boolean;
+  error: string | null;
+}
+```
+
+---
+
+## Files to Create/Modify/Delete
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/hooks/useKrakenWebSocket.ts` | **Create** | New WebSocket hook for Kraken v2 API |
+| `src/hooks/useBinanceWebSocket.ts` | **Delete** | Remove old polling-based hook |
+| `src/contexts/SOLMarketsContext.tsx` | **Modify** | Update import to use new Kraken hook |
+| `supabase/functions/binance-ws-proxy/index.ts` | **Delete** | No longer needed |
 
 ---
 
 ## Expected Outcome
 
-After implementation:
-- Price updates will work regardless of user location
-- Chart will update ~2x per second (500ms polling)
-- Connection status indicator will show "LIVE" when receiving data
-- No more 1006 WebSocket errors in console
-- Resilient to temporary network issues with automatic retry
+| Metric | Before (Polling) | After (WebSocket) |
+|--------|------------------|-------------------|
+| Update Frequency | 500ms intervals | Real-time (on every trade) |
+| Latency | ~500-1000ms | ~10-50ms |
+| Price Source | CoinGecko (aggregated) | Kraken (direct exchange) |
+| Price Accuracy | ~0.2% variance | ~0.01% variance |
+| Connection Type | HTTP polling | Persistent WebSocket |
 
 ---
 
-## Alternative Approaches Considered
+## Fallback Handling
 
-1. **Use binance.us endpoint** - Only works for US users, fails elsewhere
-2. **CORS proxy** - Adds latency, potential single point of failure
-3. **Server-Sent Events (SSE)** - More complex, could be added later for true real-time
+If WebSocket connection fails:
+1. Display "Disconnected" status in UI
+2. Attempt reconnection with exponential backoff
+3. Log errors for debugging
+4. Keep last known price visible (greyed out)
 
-The edge function approach is the most reliable solution that works globally.
+No REST API fallback - the WebSocket is the sole source of truth for lowest latency.
 
