@@ -56,6 +56,11 @@ export interface SOLDashboardState {
   isLive: boolean;
 }
 
+export interface PendingOrder {
+  price: number;
+  side: 'buy' | 'sell';
+}
+
 export interface KalshiMarketResponse {
   market_ticker: string;
   event_ticker: string;

@@ -1,5 +1,5 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
- import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData } from '@/types/sol-markets';
+import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData, PendingOrder } from '@/types/sol-markets';
  import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceWithHistory, fetchKalshiOrderbook } from '@/lib/kalshi-client';
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
@@ -85,6 +85,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    orderbook: OrderbookData | null;
    orderbookLoading: boolean;
    orderbookError: string | null;
+   pendingOrder: PendingOrder | null;
  }
  
  type Action =
@@ -103,7 +104,8 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    | { type: 'SET_ORDERBOOK'; payload: OrderbookData }
    | { type: 'SET_ORDERBOOK_LOADING'; payload: boolean }
    | { type: 'SET_ORDERBOOK_ERROR'; payload: string | null }
-   | { type: 'CLEAR_ORDERBOOK' };
+   | { type: 'CLEAR_ORDERBOOK' }
+   | { type: 'SET_PENDING_ORDER'; payload: PendingOrder | null };
  
  const initialState: ExtendedDashboardState = {
    currentPrice: null,
@@ -120,6 +122,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    orderbook: null,
    orderbookLoading: false,
    orderbookError: null,
+   pendingOrder: null,
  };
  
  function reducer(state: ExtendedDashboardState, action: Action): ExtendedDashboardState {
@@ -207,6 +210,8 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
        return { ...state, orderbookError: action.payload, orderbookLoading: false };
      case 'CLEAR_ORDERBOOK':
        return { ...state, orderbook: null, orderbookError: null };
+    case 'SET_PENDING_ORDER':
+      return { ...state, pendingOrder: action.payload };
      default:
        return state;
    }
@@ -216,6 +221,8 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    selectSlot: (slot: TimeSlot) => void;
    selectDirection: (direction: 'up' | 'down') => void;
    refreshMarkets: () => Promise<void>;
+   setPendingOrder: (order: PendingOrder | null) => void;
+   clearPendingOrder: () => void;
  }
  
  const SOLMarketsContext = createContext<SOLMarketsContextValue | null>(null);
@@ -362,6 +369,14 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
      dispatch({ type: 'SELECT_DIRECTION', payload: direction });
    }, []);
  
+   const setPendingOrder = useCallback((order: PendingOrder | null) => {
+     dispatch({ type: 'SET_PENDING_ORDER', payload: order });
+   }, []);
+ 
+   const clearPendingOrder = useCallback(() => {
+     dispatch({ type: 'SET_PENDING_ORDER', payload: null });
+   }, []);
+ 
    // Initial load
    useEffect(() => {
      discoverMarkets(false);
@@ -437,6 +452,8 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
      selectSlot,
      selectDirection,
      refreshMarkets: discoverMarkets,
+     setPendingOrder,
+     clearPendingOrder,
    };
  
    return (

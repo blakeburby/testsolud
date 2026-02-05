@@ -114,6 +114,22 @@ All colors MUST be HSL.
   }
 }
 
+/* Orderbook animations */
+@keyframes flash-green {
+  0% { background-color: hsl(var(--trading-up) / 0.3); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flash-red {
+  0% { background-color: hsl(var(--trading-down) / 0.3); }
+  100% { background-color: transparent; }
+}
+
+@keyframes pulse-spread {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4); }
+  50% { box-shadow: 0 0 0 4px hsl(var(--primary) / 0); }
+}
+
 @layer base {
   * {
     @apply border-border;
