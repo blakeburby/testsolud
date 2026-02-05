@@ -1,29 +1,44 @@
  import type { SOLMarket, KalshiMarketResponse, TimeSlot } from '@/types/sol-markets';
  
- // Matches tickers like: SOLUSDUP-26FEB05-T1645, SOLUSDDOWN-26FEB05-T1645
- const SOL_15MIN_PATTERN = /^SOLUSD(UP|DOWN)-\d{2}[A-Z]{3}\d{2}-T\d{4}$/;
+// Matches various SOL market tickers:
+// - 15-min format: SOLUSDUP-26FEB05-T1645, SOLUSDDOWN-26FEB05-T1645
+// - Kalshi format: KXSOLD26-27JAN0100, KXSOLMAXY-25T199.99
+// - General SOL: SOL*, KXSOL*
+const SOL_15MIN_PATTERN = /^SOLUSD(UP|DOWN)-\d{2}[A-Z]{3}\d{2}-T\d{4}$/;
+const SOL_GENERAL_PATTERN = /^(KX)?SOL/i;
  
  export function isSOL15MinMarket(ticker: string): boolean {
    return SOL_15MIN_PATTERN.test(ticker);
  }
  
+export function isSOLMarket(ticker: string): boolean {
+  return SOL_GENERAL_PATTERN.test(ticker);
+}
+
  export function parseSOLTicker(ticker: string): {
    direction: 'up' | 'down';
    date: string;
    time: string;
  } | null {
-   const match = ticker.match(/^SOLUSD(UP|DOWN)-(\d{2}[A-Z]{3}\d{2})-T(\d{4})$/);
-   if (!match) return null;
+  // Try 15-min format first
+  const match15min = ticker.match(/^SOLUSD(UP|DOWN)-(\d{2}[A-Z]{3}\d{2})-T(\d{4})$/);
+  if (match15min) {
+    return {
+      direction: match15min[1].toLowerCase() as 'up' | 'down',
+      date: match15min[2],
+      time: match15min[3],
+    };
+  }
  
-   return {
-     direction: match[1].toLowerCase() as 'up' | 'down',
-     date: match[2],
-     time: match[3],
-   };
+  // For general SOL markets, derive direction from title or default to 'up'
+  return null;
  }
  
  export function extractStrikePrice(title: string): number | null {
-   // Title format: "SOL above $195.50 at 4:45 PM ET?"
+  // Title formats:
+  // - "SOL above $195.50 at 4:45 PM ET?"
+  // - "SOL price on Jan 1, 2027?"
+  // - "Solana to reach $200?"
    const match = title.match(/\$(\d+(?:\.\d+)?)/);
    return match ? parseFloat(match[1]) : null;
  }
@@ -59,6 +74,43 @@
    return { start, end };
  }
  
+// Parse any SOL market into a generic format
+export function parseGenericSOLMarket(m: KalshiMarketResponse): SOLMarket | null {
+  const strikePrice = extractStrikePrice(m.title);
+  
+  // Parse close time
+  const closeTime = new Date(m.close_time);
+  
+  // For non-15min markets, use close time as window end
+  const windowEnd = closeTime;
+  const windowStart = new Date(windowEnd.getTime() - 15 * 60 * 1000);
+  
+  // Determine direction from title
+  const titleLower = m.title.toLowerCase();
+  const direction: 'up' | 'down' = titleLower.includes('above') || titleLower.includes('reach') || titleLower.includes('over') ? 'up' : 'down';
+  
+  return {
+    ticker: m.market_ticker,
+    eventTicker: m.event_ticker,
+    title: m.title,
+    strikePrice: strikePrice ?? 0,
+    direction,
+    windowStart,
+    windowEnd,
+    closeTime,
+    status: m.status === 'open' ? 'open' : 'closed',
+    yesPrice: m.last_price ? m.last_price / 100 : null,
+    noPrice: m.last_price ? (100 - m.last_price) / 100 : null,
+    yesBid: m.yes_bid ? m.yes_bid / 100 : null,
+    yesAsk: m.yes_ask ? m.yes_ask / 100 : null,
+    noBid: m.no_bid ? m.no_bid / 100 : null,
+    noAsk: m.no_ask ? m.no_ask / 100 : null,
+    volume: m.volume,
+    volume24h: m.volume_24h,
+    lastUpdated: new Date(),
+  };
+}
+
  export function filterSOL15MinMarkets(markets: KalshiMarketResponse[]): SOLMarket[] {
    return markets
      .filter(m => isSOL15MinMarket(m.market_ticker))
@@ -93,6 +145,45 @@
      .filter(Boolean) as SOLMarket[];
  }
  
+// Filter for any SOL market (relaxed pattern)
+export function filterSOLMarkets(markets: KalshiMarketResponse[]): SOLMarket[] {
+  return markets
+    .filter(m => isSOLMarket(m.market_ticker))
+    .map(m => {
+      // Try 15-min format first
+      const parsed = parseSOLTicker(m.market_ticker);
+      if (parsed) {
+        const windowTime = parseWindowTime(m.market_ticker);
+        if (!windowTime) return null;
+        
+        return {
+          ticker: m.market_ticker,
+          eventTicker: m.event_ticker,
+          title: m.title,
+          strikePrice: extractStrikePrice(m.title) ?? 0,
+          direction: parsed.direction,
+          windowStart: windowTime.start,
+          windowEnd: windowTime.end,
+          closeTime: new Date(m.close_time),
+          status: m.status === 'open' ? 'open' : 'closed',
+          yesPrice: m.last_price ? m.last_price / 100 : null,
+          noPrice: m.last_price ? (100 - m.last_price) / 100 : null,
+          yesBid: m.yes_bid ? m.yes_bid / 100 : null,
+          yesAsk: m.yes_ask ? m.yes_ask / 100 : null,
+          noBid: m.no_bid ? m.no_bid / 100 : null,
+          noAsk: m.no_ask ? m.no_ask / 100 : null,
+          volume: m.volume,
+          volume24h: m.volume_24h,
+          lastUpdated: new Date(),
+        } as SOLMarket;
+      }
+      
+      // Fall back to generic parsing
+      return parseGenericSOLMarket(m);
+    })
+    .filter(Boolean) as SOLMarket[];
+}
+
  export function groupMarketsIntoTimeSlots(markets: SOLMarket[]): TimeSlot[] {
    const now = new Date();
    const slotMap = new Map<string, SOLMarket[]>();

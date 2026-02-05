@@ -19,7 +19,8 @@
  
  export async function fetchKalshiMarkets(
    status: 'open' | 'closed' = 'open',
-   limit: number = 100
+  limit: number = 100,
+  search?: string
  ): Promise<KalshiMarketResponse[]> {
    await kalshiRateLimiter.waitAndAcquire();
  
@@ -28,6 +29,10 @@
      status,
      limit: limit.toString(),
    });
+  
+  if (search) {
+    params.set('search', search);
+  }
  
    const response = await fetch(`${SUPABASE_URL}/functions/v1/dome-proxy?${params}`);
  
