@@ -1,25 +1,21 @@
  import { cn } from '@/lib/utils';
- import { ChevronUp, Loader2, Activity } from 'lucide-react';
+ import { ChevronUp, Loader2 } from 'lucide-react';
  import type { OrderbookLevel } from '@/types/sol-markets';
  
  interface OrderbookHeaderProps {
    isOpen: boolean;
    onToggle: () => void;
    isLoading: boolean;
-   isSynthetic: boolean;
    totalBidDepth: number;
    totalAskDepth: number;
-   isLive: boolean;
  }
  
  export function OrderbookHeader({
    isOpen,
    onToggle,
    isLoading,
-   isSynthetic,
    totalBidDepth,
    totalAskDepth,
-   isLive,
  }: OrderbookHeaderProps) {
    const totalDepth = totalBidDepth + totalAskDepth;
    const bidRatio = totalDepth > 0 ? (totalBidDepth / totalDepth) * 100 : 50;
@@ -31,19 +27,11 @@
      >
        <div className="flex items-center gap-3">
          <span className="font-semibold text-foreground">Order Book</span>
-         
-         {/* Live indicator */}
-         {isLive && !isSynthetic && (
-           <div className="flex items-center gap-1 text-trading-up">
-             <Activity className="h-3 w-3 animate-pulse" />
-             <span className="text-xs font-medium">Live</span>
-           </div>
-         )}
        </div>
  
        <div className="flex items-center gap-4">
          {/* Depth summary */}
-         {!isSynthetic && totalDepth > 0 && (
+          {totalDepth > 0 && (
            <div className="hidden sm:flex items-center gap-2">
              <span className="text-xs text-trading-up tabular-nums">
                ${totalBidDepth.toFixed(0)}
@@ -68,12 +56,6 @@
          )}
  
          {isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
- 
-         {isSynthetic && (
-           <span className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-             Demo
-           </span>
-         )}
  
          <ChevronUp className={cn(
            'h-5 w-5 text-muted-foreground transition-transform',
