@@ -209,11 +209,11 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
        dispatch({ type: 'SET_LOADING', payload: true });
         
         // Try fetching with search parameter for better results
-        let rawMarkets = await fetchKalshiMarkets('open', 200, 'SOL');
+        let rawMarkets = await fetchKalshiMarkets('open', 100, 'SOL');
         
         // If no results, try without search
         if (!rawMarkets || rawMarkets.length === 0) {
-          rawMarkets = await fetchKalshiMarkets('open', 200);
+          rawMarkets = await fetchKalshiMarkets('open', 100);
         }
         
         // Try 15-minute markets first, then fall back to general SOL markets
@@ -269,7 +269,10 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
     }, [state.selectedSlot, state.currentPrice]);
  
    const fetchSelectedMarketPrice = useCallback(async () => {
-     if (!state.selectedMarket) return;
+      if (!state.selectedMarket) return;
+      
+      // Skip price fetching for synthetic markets
+      if (state.selectedMarket.ticker.startsWith('SYNTHETIC-')) return;
  
      try {
        const priceData = await fetchMarketPrice(state.selectedMarket.ticker);
