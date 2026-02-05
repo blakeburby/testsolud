@@ -66,6 +66,8 @@ export default {
          },
          chart: {
            "1": "hsl(var(--chart-1))",
+           line: "hsl(var(--chart-line))",
+           target: "hsl(var(--target-line))",
          },
       },
       borderRadius: {
