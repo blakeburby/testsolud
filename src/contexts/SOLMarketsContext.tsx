@@ -5,81 +5,6 @@ import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData,
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
 import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
-
-// Synthetic 15-minute window generator for when real contracts aren't available
-function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
-  const now = new Date();
-  const slots: TimeSlot[] = [];
-  
-  // Get the current 15-minute window start
-  const minutes = now.getMinutes();
-  const windowStart = new Date(now);
-  windowStart.setMinutes(Math.floor(minutes / 15) * 15, 0, 0);
-  
-  // Generate current and next 4 windows
-  for (let i = 0; i < 5; i++) {
-    const slotStart = new Date(windowStart.getTime() + i * 15 * 60 * 1000);
-    const slotEnd = new Date(slotStart.getTime() + 15 * 60 * 1000);
-    
-    // Calculate strike prices around current price
-    const strikeBase = Math.round(currentPrice);
-    const upStrike = strikeBase + (i * 0.5);
-    const downStrike = strikeBase - (i * 0.5);
-    
-    const markets: SOLMarket[] = [
-      {
-        ticker: `SYNTHETIC-UP-${i}`,
-        eventTicker: `SYNTHETIC-EVENT-${i}`,
-        title: `SOL above $${upStrike.toFixed(2)} at ${slotEnd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} ET?`,
-        strikePrice: upStrike,
-        direction: 'up' as const,
-        windowStart: slotStart,
-        windowEnd: slotEnd,
-        closeTime: slotEnd,
-        status: 'open' as const,
-        yesPrice: 0.50,
-        noPrice: 0.50,
-        yesBid: 0.49,
-        yesAsk: 0.51,
-        noBid: 0.49,
-        noAsk: 0.51,
-        volume: 0,
-        volume24h: 0,
-        lastUpdated: new Date(),
-      },
-      {
-        ticker: `SYNTHETIC-DOWN-${i}`,
-        eventTicker: `SYNTHETIC-EVENT-${i}`,
-        title: `SOL below $${downStrike.toFixed(2)} at ${slotEnd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} ET?`,
-        strikePrice: downStrike,
-        direction: 'down' as const,
-        windowStart: slotStart,
-        windowEnd: slotEnd,
-        closeTime: slotEnd,
-        status: 'open' as const,
-        yesPrice: 0.50,
-        noPrice: 0.50,
-        yesBid: 0.49,
-        yesAsk: 0.51,
-        noBid: 0.49,
-        noAsk: 0.51,
-        volume: 0,
-        volume24h: 0,
-        lastUpdated: new Date(),
-      },
-    ];
-    
-    slots.push({
-      windowStart: slotStart,
-      windowEnd: slotEnd,
-      markets,
-      isActive: i === 0,
-      isPast: false,
-    });
-  }
-  
-  return slots;
-}
  
  interface ExtendedDashboardState extends SOLDashboardState {
    orderbook: OrderbookData | null;
@@ -252,12 +177,6 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
          .filter((m): m is SOLMarket => m !== null);
        
        let timeSlots = groupMarketsIntoTimeSlots(solMarkets);
-       
-       // If no real markets, use synthetic slots as fallback
-       if (timeSlots.length === 0 && state.currentPrice && state.currentPrice > 0) {
-         console.log('No real KXSOL15M markets found, using synthetic 15-minute windows');
-         timeSlots = generateSyntheticSlots(state.currentPrice);
-       }
  
        dispatch({ type: 'SET_MARKETS', payload: solMarkets });
        dispatch({ type: 'SET_TIME_SLOTS', payload: timeSlots });
@@ -283,15 +202,6 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
        console.error('Failed to discover markets:', error);
        dispatch({ type: 'SET_ERROR', payload: error instanceof Error ? error.message : 'Failed to load markets' });
        dispatch({ type: 'SET_LIVE', payload: false });
-        
-        // If discovery fails but we have a price, use synthetic slots
-        if (state.currentPrice && state.currentPrice > 0) {
-          const syntheticSlots = generateSyntheticSlots(state.currentPrice);
-          dispatch({ type: 'SET_TIME_SLOTS', payload: syntheticSlots });
-          if (!state.selectedSlot) {
-            dispatch({ type: 'SELECT_SLOT', payload: syntheticSlots[0] });
-          }
-        }
      } finally {
        dispatch({ type: 'SET_LOADING', payload: false });
      }
@@ -299,9 +209,6 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
  
    const fetchSelectedMarketPrice = useCallback(async () => {
       if (!state.selectedMarket) return;
-      
-      // Skip price fetching for synthetic markets
-      if (state.selectedMarket.ticker.startsWith('SYNTHETIC-')) return;
  
      try {
        const priceData = await fetchKalshiMarket(state.selectedMarket.ticker);
@@ -394,8 +301,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
  
    // Market price polling (every 1s for real-time odds)
    useEffect(() => {
-      // Skip polling for synthetic markets entirely
-      if (state.selectedMarket && !state.selectedMarket.ticker.startsWith('SYNTHETIC-')) {
+      if (state.selectedMarket) {
        fetchSelectedMarketPrice();
        priceIntervalRef.current = window.setInterval(fetchSelectedMarketPrice, 500);
      }
@@ -425,8 +331,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
  
    // Orderbook polling (every 2s when market is selected)
    useEffect(() => {
-     // Skip for synthetic markets or when no market selected
-     if (!state.selectedMarket || state.selectedMarket.ticker.startsWith('SYNTHETIC-')) {
+      if (!state.selectedMarket) {
        dispatch({ type: 'CLEAR_ORDERBOOK' });
        return;
      }

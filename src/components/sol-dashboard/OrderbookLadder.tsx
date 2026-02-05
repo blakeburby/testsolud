@@ -39,9 +39,6 @@ function getNumericSize(size: unknown): number {
    const [isOpen, setIsOpen] = useState(true);
    const [activeTab, setActiveTab] = useState<'up' | 'down'>('up');
  
-   // Check if this is a synthetic market
-   const isSynthetic = selectedMarket?.ticker.startsWith('SYNTHETIC-');
- 
    // Get orderbook data based on active tab
    const bids = (activeTab === 'up' 
      ? (orderbook?.yesBids || []) 
@@ -118,9 +115,6 @@ function getNumericSize(size: unknown): number {
    const OrderbookEmpty = () => (
      <div className="p-8 text-center text-muted-foreground">
        <p className="text-sm">No orderbook data available</p>
-       {isSynthetic && (
-         <p className="text-xs mt-1">Synthetic markets don't have real orderbook data</p>
-       )}
      </div>
    );
  
@@ -130,10 +124,8 @@ function getNumericSize(size: unknown): number {
          isOpen={isOpen}
          onToggle={() => setIsOpen(!isOpen)}
          isLoading={orderbookLoading}
-         isSynthetic={isSynthetic}
          totalBidDepth={totalBidDepth}
          totalAskDepth={totalAskDepth}
-         isLive={isLive}
        />
  
        {isOpen && (
@@ -144,12 +136,8 @@ function getNumericSize(size: unknown): number {
             {/* Loading state (only show on initial load) */}
             {orderbookLoading && !orderbook && !orderbookError && <OrderbookSkeleton />}
  
-            {/* Synthetic market message */}
-            {isSynthetic && !orderbookError && <OrderbookEmpty />}
- 
             {/* Real orderbook content */}
-            {!isSynthetic && !orderbookError && (orderbookLoading ? (!orderbook && <OrderbookSkeleton />) : null)}
-            {!isSynthetic && !orderbookError && (orderbook || !orderbookLoading) && (
+            {!orderbookError && orderbook && (
               <TooltipProvider>
            {/* Tabs */}
            <div className="flex items-center justify-between p-4 border-b border-border">
@@ -261,7 +249,10 @@ function getNumericSize(size: unknown): number {
               <OrderbookEmpty />
             )}
               </TooltipProvider>
-            )}
+           )}
+
+           {/* Empty state when no orderbook data */}
+           {!orderbookError && !orderbook && !orderbookLoading && <OrderbookEmpty />}
          </div>
        )}
      </div>
