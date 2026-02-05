@@ -5,6 +5,7 @@
    timestamp: number | null;
    isConnected: boolean;
    error: string | null;
+  sequence: number;
  }
  
  interface KrakenTradeMessage {
@@ -31,6 +32,7 @@
      timestamp: null,
      isConnected: false,
      error: null,
+    sequence: 0,
    });
  
    const wsRef = useRef<WebSocket | null>(null);
@@ -76,6 +78,7 @@
          ...prev,
          isConnected: true,
          error: null,
+          sequence: prev.sequence + 1,
        }));
      };
  
@@ -107,12 +110,13 @@
              
              console.log(`[Kraken WS] Trade: $${latestTrade.price.toFixed(4)} | ${new Date(tradeTimestamp).toLocaleTimeString()}`);
              
-             setState({
+            setState(prev => ({
                price: latestTrade.price,
                timestamp: tradeTimestamp,
                isConnected: true,
                error: null,
-             });
+              sequence: prev.sequence + 1,
+            }));
            }
          }
        } catch (err) {
@@ -128,6 +132,7 @@
          ...prev,
          isConnected: false,
          error: 'WebSocket error',
+        sequence: prev.sequence,
        }));
      };
  
@@ -138,6 +143,7 @@
        setState(prev => ({
          ...prev,
          isConnected: false,
+        sequence: prev.sequence,
        }));
        
        // Attempt reconnection with exponential backoff
