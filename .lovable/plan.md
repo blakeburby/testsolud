@@ -1,178 +1,69 @@
 
 
-# Orderbook UI/UX Enhancement Plan
+# Remove All Fake/Made-up Data
 
-This plan outlines improvements to transform the orderbook from a static data display into an interactive, professional-grade trading tool that matches the quality expected on platforms like Kalshi, Binance, or Robinhood.
-
----
-
-## Current State Analysis
-
-The existing orderbook displays:
-- Bid/ask levels with price, size, and total columns
-- Basic depth bars showing relative volume
-- Spread and last price in a separator row
-- Trade Up/Down tabs for switching contract sides
-- Loading, error, and empty states
-
-**Pain Points Identified:**
-1. No click-to-trade functionality - users must use separate buttons
-2. Depth bars don't show cumulative liquidity
-3. No visual feedback when prices update in real-time
-4. Mid-price is buried in the spread row instead of being prominent
-5. No hover states or interaction affordances
-6. Missing cumulative totals for understanding market depth
-7. No indication of user's position or pending orders
+This plan removes all synthetic fallback mechanisms and demo indicators from the application, ensuring only real Kalshi market data is displayed.
 
 ---
 
-## Proposed Enhancements
+## What Will Be Removed
 
-### 1. Prominent Mid-Price Display
-Add a visually distinct center section showing:
-- Current mid-price with large typography
-- Spread displayed prominently (in cents and percentage)
-- Up/down arrow indicating price direction with color coding
+### 1. Synthetic Market Generator
+The `generateSyntheticSlots()` function creates fake trading windows with hardcoded 50/50 odds when real contracts are unavailable. This will be completely removed.
 
-### 2. Cumulative Depth Visualization
-Replace the current per-level bars with cumulative depth bars:
-- Each row shows total liquidity at that price AND all better prices
-- Creates a "staircase" effect that reveals liquidity walls
-- Use gradient opacity to show density (darker = more volume)
+**Affected file:** `src/contexts/SOLMarketsContext.tsx`
+- Lines 9-82: Delete the entire `generateSyntheticSlots` function
+- Lines 256-260: Remove fallback logic that calls synthetic generator when no markets found
+- Lines 287-294: Remove fallback logic that creates synthetic slots on API error
+- Lines 303-304: Remove synthetic market check in price fetching
+- Lines 397-398: Remove synthetic market check in polling logic
+- Lines 428-431: Remove synthetic market check in orderbook polling
 
-### 3. Click-to-Trade Rows
-Make each orderbook row interactive:
-- Hovering highlights the entire row
-- Clicking a bid row pre-fills a "Buy at X" limit order
-- Clicking an ask row pre-fills a "Sell at X" limit order
-- Cursor changes to pointer on hover
-- Tooltip shows "Click to trade at this price"
+### 2. Demo Badge in UI
+The "Demo" label appears in the orderbook header when viewing synthetic markets.
 
-### 4. Real-Time Update Animations
-Add micro-animations for price changes:
-- Brief green flash when size increases
-- Brief red flash when size decreases
-- Smooth number transitions using CSS animations
-- Pulse effect on spread when it narrows/widens
+**Affected file:** `src/components/sol-dashboard/orderbook/OrderbookHeader.tsx`
+- Lines 72-76: Remove the `isSynthetic` demo badge
+- Lines 9, 19: Remove `isSynthetic` prop entirely
+- Line 36: Remove `!isSynthetic` condition from Live indicator
+- Line 46: Remove `!isSynthetic` condition from depth summary
 
-### 5. Improved Visual Hierarchy
-Restructure the layout for faster comprehension:
-- Larger, bolder price column with color coding
-- Smaller, muted size/total columns
-- Add "My Size" column placeholder for future order display
-- Best bid/ask rows get subtle highlight background
+### 3. Synthetic Market Empty State
+The orderbook shows a special message for synthetic markets.
 
-### 6. Enhanced Header with Key Metrics
-Expand the collapsed header to show:
-- Total bid depth (sum of all bids in dollars)
-- Total ask depth (sum of all asks in dollars)
-- Bid/Ask imbalance ratio visualization (bar showing lean)
-- Refresh timestamp with "Live" indicator
-
-### 7. Keyboard Navigation (Accessibility)
-Add keyboard controls for power users:
-- Arrow keys to navigate between price levels
-- Enter to select price for order entry
-- Escape to deselect
-- Focus ring styling for selected row
-
-### 8. Depth Chart Mini-Visualization
-Add an optional collapsed view showing:
-- Small area chart of cumulative depth
-- Bids stacking from center-left, asks from center-right
-- Quick visual indicator of market balance
+**Affected file:** `src/components/sol-dashboard/OrderbookLadder.tsx`
+- Lines 42-43: Remove `isSynthetic` variable
+- Lines 121-123: Remove synthetic-specific empty state message
+- Line 133: Remove `isSynthetic` prop passed to OrderbookHeader
+- Line 148: Remove conditional that shows empty state for synthetic markets
 
 ---
 
-## Technical Implementation
+## Behavior After Changes
 
-### New Files
-- `src/components/sol-dashboard/orderbook/OrderbookRow.tsx` - Individual row component with hover/click handling
-- `src/components/sol-dashboard/orderbook/DepthBar.tsx` - Cumulative depth bar component
-- `src/components/sol-dashboard/orderbook/MidPriceDisplay.tsx` - Prominent center section
-- `src/components/sol-dashboard/orderbook/OrderbookHeader.tsx` - Enhanced header with metrics
-- `src/hooks/useOrderbookAnimations.ts` - Hook for managing price change animations
-
-### Modified Files
-- `src/components/sol-dashboard/OrderbookLadder.tsx` - Refactor to use new sub-components
-- `src/contexts/SOLMarketsContext.tsx` - Add `pendingOrderPrice` state for click-to-trade
-- `src/index.css` - Add keyframe animations for price flashes
-- `tailwind.config.ts` - Add new animation utilities
-
-### State Changes
-```text
-+------------------------------------------+
-|  SOLMarketsContext                       |
-|  +-----------------+                     |
-|  | pendingOrder    |  <- Click-to-trade  |
-|  |   price: number |     pre-fill state  |
-|  |   side: 'buy'   |                     |
-|  |        | 'sell' |                     |
-|  +-----------------+                     |
-+------------------------------------------+
-```
-
-### CSS Animations
-```text
-+-- Keyframes --+
-| flash-green   | -> 0.3s background pulse for size increase
-| flash-red     | -> 0.3s background pulse for size decrease
-| number-tick   | -> 0.15s subtle scale for changing numbers
-| pulse-spread  | -> 0.5s glow effect for spread changes
-+---------------+
-```
+When no real Kalshi markets are available:
+- The UI will show an appropriate empty/loading state instead of fake data
+- Users will see "No markets available" rather than synthetic contracts
+- The orderbook will display "No orderbook data available" without the synthetic explanation
+- Error handling will display the actual error message to users
 
 ---
 
-## Component Structure
+## Files to Modify
 
-```text
-OrderbookLadder
-+-- OrderbookHeader (collapsed summary + metrics)
-+-- TabSwitcher (Trade Up / Trade Down)
-|
-+-- ScrollArea (fixed height, scrollable)
-|   +-- Ask Rows (reversed, highest first)
-|   |   +-- OrderbookRow (per level)
-|   |       +-- DepthBar (cumulative background)
-|   |       +-- Price | Size | Total | My Size
-|   |
-|   +-- MidPriceDisplay (sticky center)
-|   |   +-- Mid Price (large)
-|   |   +-- Spread (cents + %)
-|   |   +-- Direction Arrow
-|   |
-|   +-- Bid Rows (highest first)
-|       +-- OrderbookRow (per level)
-|           +-- DepthBar (cumulative background)
-|           +-- Price | Size | Total | My Size
-|
-+-- DepthMiniChart (optional, toggle)
-```
+| File | Change Type |
+|------|-------------|
+| `src/contexts/SOLMarketsContext.tsx` | Remove synthetic generator function and all related fallback logic |
+| `src/components/sol-dashboard/orderbook/OrderbookHeader.tsx` | Remove `isSynthetic` prop and Demo badge |
+| `src/components/sol-dashboard/OrderbookLadder.tsx` | Remove synthetic checks and related UI logic |
 
 ---
 
-## Implementation Priority
+## Notes
 
-| Priority | Enhancement | Impact | Effort |
-|----------|-------------|--------|--------|
-| 1 | Prominent mid-price display | High | Low |
-| 2 | Click-to-trade rows | High | Medium |
-| 3 | Real-time update animations | Medium | Medium |
-| 4 | Cumulative depth bars | High | Medium |
-| 5 | Enhanced header metrics | Medium | Low |
-| 6 | Keyboard navigation | Medium | Medium |
-| 7 | Depth chart mini-viz | Low | High |
+- The fake cursor in `input-otp.tsx` is a standard UI component pattern (visual caret simulation) and not fake data
+- The random width in `sidebar.tsx` is a skeleton loader animation, not fake data
+- The `price: 0` fallback in the edge function is a legitimate error state, not fake data
 
----
-
-## Summary
-
-This enhancement transforms the orderbook from a passive data display into an active trading interface. The key improvements are:
-
-1. **Visual clarity** - Mid-price and spread become immediately scannable
-2. **Interactivity** - Click any row to start a trade at that price
-3. **Market insight** - Cumulative depth reveals liquidity walls at a glance
-4. **Responsiveness** - Animations draw attention to real-time changes
-5. **Accessibility** - Keyboard navigation for power users
+These elements are standard UI/UX patterns and do not constitute fake market data, so they will not be removed.
 
