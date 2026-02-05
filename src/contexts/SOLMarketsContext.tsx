@@ -370,7 +370,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
       // Skip polling for synthetic markets entirely
       if (state.selectedMarket && !state.selectedMarket.ticker.startsWith('SYNTHETIC-')) {
        fetchSelectedMarketPrice();
-       priceIntervalRef.current = window.setInterval(fetchSelectedMarketPrice, 1000);
+       priceIntervalRef.current = window.setInterval(fetchSelectedMarketPrice, 500);
      }
      return () => {
        if (priceIntervalRef.current) clearInterval(priceIntervalRef.current);
@@ -379,7 +379,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
  
    // SOL price polling (every 1s for real-time chart)
    useEffect(() => {
-     solPriceIntervalRef.current = window.setInterval(fetchSOLPriceQuickData, 1000);
+     solPriceIntervalRef.current = window.setInterval(fetchSOLPriceQuickData, 500);
      return () => {
        if (solPriceIntervalRef.current) clearInterval(solPriceIntervalRef.current);
      };
