@@ -5,6 +5,30 @@
  import { Skeleton } from '@/components/ui/skeleton';
  import type { OrderbookLevel } from '@/types/sol-markets';
  
+// Helper to safely format size as a number
+function formatSize(size: unknown): string {
+  if (typeof size === 'number' && !isNaN(size)) {
+    return size.toFixed(0);
+  }
+  if (typeof size === 'string') {
+    const parsed = parseFloat(size);
+    return isNaN(parsed) ? '0' : parsed.toFixed(0);
+  }
+  return '0';
+}
+
+// Helper to safely get numeric size
+function getNumericSize(size: unknown): number {
+  if (typeof size === 'number' && !isNaN(size)) {
+    return size;
+  }
+  if (typeof size === 'string') {
+    const parsed = parseFloat(size);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  return 0;
+}
+
  export function OrderbookLadder() {
    const { selectedMarket, selectedSlot, orderbook, orderbookLoading, orderbookError } = useSOLMarkets();
    const [isOpen, setIsOpen] = useState(true);
@@ -26,8 +50,8 @@
      : (orderbook?.noAsks || []);
  
    const maxSize = Math.max(
-     ...bids.map(b => b.size), 
-     ...asks.map(a => a.size), 
+      ...bids.map(b => getNumericSize(b.size)), 
+      ...asks.map(a => getNumericSize(a.size)), 
      1
    );
  
@@ -152,15 +176,15 @@
                   <div key={`ask-${i}`} className="relative grid grid-cols-4 px-4 py-2 text-sm">
                    <div
                       className="absolute left-0 top-0 h-full bg-trading-down/10"
-                      style={{ width: `${(level.size / maxSize) * 40}%` }}
+                      style={{ width: `${(getNumericSize(level.size) / maxSize) * 40}%` }}
                    />
                     <span className="relative z-10" />
                     <span className="relative z-10 text-center text-trading-down tabular-nums">
                       {(level.price * 100).toFixed(1)}¢
                     </span>
-                    <span className="relative z-10 text-center tabular-nums">{level.size.toFixed(0)}</span>
+                    <span className="relative z-10 text-center tabular-nums">{formatSize(level.size)}</span>
                     <span className="relative z-10 text-right text-muted-foreground tabular-nums">
-                      ${(level.price * level.size).toFixed(2)}
+                      ${(level.price * getNumericSize(level.size)).toFixed(2)}
                     </span>
                  </div>
                ))}
@@ -189,15 +213,15 @@
                <div key={`bid-${i}`} className="relative grid grid-cols-4 px-4 py-2 text-sm">
                  <div
                    className="absolute left-0 top-0 h-full bg-trading-up/10"
-                   style={{ width: `${(level.size / maxSize) * 40}%` }}
+                   style={{ width: `${(getNumericSize(level.size) / maxSize) * 40}%` }}
                  />
                  <span className="relative z-10" />
                  <span className="relative z-10 text-center text-trading-up tabular-nums">
                    {(level.price * 100).toFixed(1)}¢
                  </span>
-                  <span className="relative z-10 text-center tabular-nums">{level.size.toFixed(0)}</span>
+                  <span className="relative z-10 text-center tabular-nums">{formatSize(level.size)}</span>
                  <span className="relative z-10 text-right text-muted-foreground tabular-nums">
-                    ${(level.price * level.size).toFixed(2)}
+                    ${(level.price * getNumericSize(level.size)).toFixed(2)}
                  </span>
                </div>
              ))}
