@@ -1,4 +1,3 @@
- import { supabase } from '@/integrations/supabase/client';
  import { kalshiRateLimiter } from './rate-limiter';
  import type { KalshiMarketResponse } from '@/types/sol-markets';
  
@@ -58,10 +57,27 @@
    return response.json();
  }
  
- export async function fetchSOLPrice(includeKlines: boolean = false): Promise<{
+ // Fast mode for 1-second polling - only fetches current price
+ export async function fetchSOLPriceQuick(): Promise<{
    price: number;
    timestamp: number;
-   klines?: Array<{
+ }> {
+   const params = new URLSearchParams({ symbol: 'SOLUSDT' });
+   const response = await fetch(`${SUPABASE_URL}/functions/v1/binance-price?${params}`);
+ 
+   if (!response.ok) {
+     const error = await response.json();
+     throw new Error(error.error || 'Failed to fetch SOL price');
+   }
+ 
+   return response.json();
+ }
+ 
+ // Historical mode for initial load - fetches price + klines
+ export async function fetchSOLPriceWithHistory(): Promise<{
+   price: number;
+   timestamp: number;
+   klines: Array<{
      time: number;
      open: number;
      high: number;
@@ -72,11 +88,8 @@
  }> {
    const params = new URLSearchParams({
      symbol: 'SOLUSDT',
+     historical: 'true',
    });
- 
-   if (includeKlines) {
-     params.set('klines', 'true');
-   }
  
    const response = await fetch(`${SUPABASE_URL}/functions/v1/binance-price?${params}`);
  
@@ -85,5 +98,10 @@
      throw new Error(error.error || 'Failed to fetch SOL price');
    }
  
-   return response.json();
+   const data = await response.json();
+   return {
+     price: data.price,
+     timestamp: data.timestamp,
+     klines: data.klines || [],
+   };
  }
