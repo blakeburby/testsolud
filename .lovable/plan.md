@@ -1,69 +1,73 @@
 
+# Remove REST Feed and CoinGecko/CoinPaprika Fallbacks
 
-# Remove All Fake/Made-up Data
-
-This plan removes all synthetic fallback mechanisms and demo indicators from the application, ensuring only real Kalshi market data is displayed.
+This plan removes all REST-based price polling and third-party API fallbacks, making the Binance WebSocket the **sole source** of SOL price data.
 
 ---
 
-## What Will Be Removed
+## Summary of Changes
 
-### 1. Synthetic Market Generator
-The `generateSyntheticSlots()` function creates fake trading windows with hardcoded 50/50 odds when real contracts are unavailable. This will be completely removed.
+### 1. Frontend Context (`src/contexts/SOLMarketsContext.tsx`)
 
-**Affected file:** `src/contexts/SOLMarketsContext.tsx`
-- Lines 9-82: Delete the entire `generateSyntheticSlots` function
-- Lines 256-260: Remove fallback logic that calls synthetic generator when no markets found
-- Lines 287-294: Remove fallback logic that creates synthetic slots on API error
-- Lines 303-304: Remove synthetic market check in price fetching
-- Lines 397-398: Remove synthetic market check in polling logic
-- Lines 428-431: Remove synthetic market check in orderbook polling
+| Remove | Reason |
+|--------|--------|
+| `fetchSOLPriceHistorical` function (lines 248-263) | REST-based historical fetch no longer needed |
+| Import of `fetchSOLPriceWithHistory` from kalshi-client | No longer used |
+| Call to `fetchSOLPriceHistorical()` on initial load (line 296) | WebSocket now handles all price updates |
+| Call to `fetchSOLPriceHistorical()` in `checkContractExpiry` (lines 273-274) | Unnecessary with live WebSocket |
 
-### 2. Demo Badge in UI
-The "Demo" label appears in the orderbook header when viewing synthetic markets.
+**After removal**: The chart will start empty and populate as WebSocket trade data arrives. This is intentional - no stale/delayed data from REST sources.
 
-**Affected file:** `src/components/sol-dashboard/orderbook/OrderbookHeader.tsx`
-- Lines 72-76: Remove the `isSynthetic` demo badge
-- Lines 9, 19: Remove `isSynthetic` prop entirely
-- Line 36: Remove `!isSynthetic` condition from Live indicator
-- Line 46: Remove `!isSynthetic` condition from depth summary
+---
 
-### 3. Synthetic Market Empty State
-The orderbook shows a special message for synthetic markets.
+### 2. Frontend Client (`src/lib/kalshi-client.ts`)
 
-**Affected file:** `src/components/sol-dashboard/OrderbookLadder.tsx`
-- Lines 42-43: Remove `isSynthetic` variable
-- Lines 121-123: Remove synthetic-specific empty state message
-- Line 133: Remove `isSynthetic` prop passed to OrderbookHeader
-- Line 148: Remove conditional that shows empty state for synthetic markets
+| Remove | Reason |
+|--------|--------|
+| `fetchSOLPriceQuick` function (lines 40-53) | Not used (already replaced by WebSocket) |
+| `fetchSOLPriceWithHistory` function (lines 55-86) | No longer called after context cleanup |
+
+**Keep**: The Kalshi market functions (`fetchKalshi15MinMarkets`, `fetchKalshiMarket`, `fetchKalshiOrderbook`) remain untouched - these are for prediction market data, not SOL price.
+
+---
+
+### 3. Edge Function (`supabase/functions/binance-price/index.ts`)
+
+This edge function will be **deleted entirely** since it's no longer called by the frontend.
+
+**What it contained**:
+- Dome API integration
+- CoinGecko fallback (3 attempts with backoff)
+- CoinPaprika fallback
+- In-memory price cache
+- Historical data fetching
+
+All of this is now replaced by the direct Binance WebSocket connection in the browser.
+
+---
+
+## Files Modified
+
+| File | Action |
+|------|--------|
+| `src/contexts/SOLMarketsContext.tsx` | Remove REST fetch logic and imports |
+| `src/lib/kalshi-client.ts` | Remove unused price fetch functions |
+| `supabase/functions/binance-price/index.ts` | **Delete entire file** |
 
 ---
 
 ## Behavior After Changes
 
-When no real Kalshi markets are available:
-- The UI will show an appropriate empty/loading state instead of fake data
-- Users will see "No markets available" rather than synthetic contracts
-- The orderbook will display "No orderbook data available" without the synthetic explanation
-- Error handling will display the actual error message to users
+- **On page load**: Chart starts empty, populates within milliseconds as WebSocket trades arrive
+- **Real-time updates**: Every Binance trade updates the chart immediately
+- **No fallbacks**: If WebSocket disconnects, the chart pauses until reconnection (connection status indicator already shows this)
+- **Contract expiry**: Markets refresh but price history builds from live WebSocket only
+- **No edge function calls**: Reduced latency, no API rate limits, no third-party dependencies
 
 ---
 
-## Files to Modify
+## Technical Notes
 
-| File | Change Type |
-|------|-------------|
-| `src/contexts/SOLMarketsContext.tsx` | Remove synthetic generator function and all related fallback logic |
-| `src/components/sol-dashboard/orderbook/OrderbookHeader.tsx` | Remove `isSynthetic` prop and Demo badge |
-| `src/components/sol-dashboard/OrderbookLadder.tsx` | Remove synthetic checks and related UI logic |
-
----
-
-## Notes
-
-- The fake cursor in `input-otp.tsx` is a standard UI component pattern (visual caret simulation) and not fake data
-- The random width in `sidebar.tsx` is a skeleton loader animation, not fake data
-- The `price: 0` fallback in the edge function is a legitimate error state, not fake data
-
-These elements are standard UI/UX patterns and do not constitute fake market data, so they will not be removed.
-
+- The WebSocket provides ~20+ updates per second during active trading
+- Historical seeding is removed by design - users see live data from the moment they load the page
+- If historical context is needed in the future, Binance's REST klines API could be added directly (but per your requirement, we're removing all REST)
