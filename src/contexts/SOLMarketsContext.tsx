@@ -11,9 +11,6 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
    orderbookLoading: boolean;
    orderbookError: string | null;
    pendingOrder: PendingOrder | null;
-  livePrice: number | null;
-  liveTimestamp: number | null;
-  wsConnected: boolean;
  }
  
  type Action =
@@ -51,9 +48,6 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
    orderbookLoading: false,
    orderbookError: null,
    pendingOrder: null,
-  livePrice: null,
-  liveTimestamp: null,
-  wsConnected: false,
  };
  
  function reducer(state: ExtendedDashboardState, action: Action): ExtendedDashboardState {
@@ -154,6 +148,7 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
    refreshMarkets: () => Promise<void>;
    setPendingOrder: (order: PendingOrder | null) => void;
    clearPendingOrder: () => void;
+  wsConnected: boolean;
  }
  
  const SOLMarketsContext = createContext<SOLMarketsContextValue | null>(null);
@@ -341,8 +336,6 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
  
    const value: SOLMarketsContextValue = {
      ...state,
-    livePrice: wsPrice,
-    liveTimestamp: wsTimestamp,
     wsConnected,
      selectSlot,
      selectDirection,
