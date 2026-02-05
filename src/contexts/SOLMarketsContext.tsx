@@ -138,9 +138,10 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
        const cutoffTime = timestamp - FIFTEEN_MINUTES;
        
        // Check for duplicate timestamps (within 500ms)
-       const isDuplicate = state.priceHistory.some(
-         p => Math.abs(p.time - timestamp) < 500
-       );
+      // Check for duplicate timestamps (within 50ms to allow ~20 updates/sec)
+      const isDuplicate = state.priceHistory.some(
+        p => Math.abs(p.time - timestamp) < 50
+      );
        if (isDuplicate) return state;
        
        // Create new price point
@@ -369,6 +370,7 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
   // WebSocket price updates (replaces polling)
    useEffect(() => {
     if (wsPrice && wsTimestamp) {
+      console.log(`[WS] Price: $${wsPrice.toFixed(4)} | ${new Date(wsTimestamp).toLocaleTimeString()}`);
       dispatch({ type: 'ADD_PRICE_POINT', payload: { price: wsPrice, timestamp: wsTimestamp } });
     }
   }, [wsPrice, wsTimestamp]);

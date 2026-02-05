@@ -21,14 +21,18 @@
    const chartData = useMemo(() => {
      if (!selectedSlot) return [];
      
+    const now = Date.now();
      const windowStart = selectedSlot.windowStart.getTime();
-     const windowEnd = selectedSlot.windowEnd.getTime();
+    // Always include current time to show live data
+    const windowEnd = Math.max(selectedSlot.windowEnd.getTime(), now + 60000);
      
      // Filter prices to current contract window
      const windowPrices = priceHistory.filter(
        k => k.time >= windowStart && k.time <= windowEnd
      );
      
+    console.log(`[Chart] ${windowPrices.length} points in window, ${priceHistory.length} total`);
+    
      // Sort by time and format
      return windowPrices
        .sort((a, b) => a.time - b.time)
