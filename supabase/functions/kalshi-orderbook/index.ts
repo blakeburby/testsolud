@@ -1,5 +1,6 @@
  import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
  
+const VERSION = "v1.0.2";
  const KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2";
  
  const corsHeaders = {
@@ -19,14 +20,14 @@
    let pemContents: string;
    
    // Log key format for debugging (without exposing key content)
-   console.log("Key starts with:", pem.substring(0, 50).replace(/[A-Za-z0-9+/=]/g, '*'));
+  console.log(`[${VERSION}] Key starts with:`, pem.substring(0, 50).replace(/[A-Za-z0-9+/=]/g, '*'));
  
    if (pem.includes(pkcs8Header)) {
      pemContents = pem
        .replace(pkcs8Header, "")
        .replace(pkcs8Footer, "")
        .replace(/\s/g, "");
-     console.log("Detected PKCS#8 format, content length:", pemContents.length);
+    console.log(`[${VERSION}] Detected PKCS#8 format, content length:`, pemContents.length);
    } else if (pem.includes(pkcs1Header)) {
      // PKCS#1 format is not directly supported by Web Crypto
      throw new Error(
@@ -48,7 +49,7 @@
        );
      }
      pemContents = cleanedPem;
-     console.log("Using raw base64 content, length:", pemContents.length);
+    console.log(`[${VERSION}] Using raw base64 content, length:`, pemContents.length);
    }
  
    let binaryDer: Uint8Array;
@@ -56,7 +57,7 @@
      // Ensure valid base64 (add padding if needed)
      const padded = pemContents + "=".repeat((4 - pemContents.length % 4) % 4);
      binaryDer = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-     console.log("Decoded key, binary length:", binaryDer.length);
+    console.log(`[${VERSION}] Decoded key, binary length:`, binaryDer.length);
    } catch {
      throw new Error("Failed to decode private key base64 content. Ensure the key is properly formatted.");
    }
@@ -115,7 +116,7 @@
         const baseDelay = Math.pow(2, attempt) * 500;
         const jitter = Math.random() * 500;
         const delay = baseDelay + jitter;
-         console.log(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
+         console.log(`[${VERSION}] Retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms`);
          await new Promise((r) => setTimeout(r, delay));
          continue;
        }
@@ -126,7 +127,7 @@
       const baseDelay = Math.pow(2, attempt) * 500;
       const jitter = Math.random() * 500;
       const delay = baseDelay + jitter;
-       console.log(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms due to: ${lastError.message}`);
+       console.log(`[${VERSION}] Retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms: ${lastError.message}`);
        await new Promise((r) => setTimeout(r, delay));
      }
    }
@@ -201,7 +202,7 @@
      const signature = await signRequest(privateKey, timestamp, method, path);
  
      const kalshiUrl = `${KALSHI_API_BASE}/markets/${ticker}/orderbook`;
-     console.log(`Fetching orderbook for ${ticker}`);
+    console.log(`[${VERSION}] Fetching orderbook for ${ticker}`);
  
      const response = await fetchWithRetry(kalshiUrl, {
        method: "GET",
@@ -216,14 +217,15 @@
  
      if (response.status === 401) {
        const errorText = await response.text();
-       console.error("Kalshi authentication failed:", errorText);
+      console.error(`[${VERSION}] Kalshi authentication failed:`, errorText);
        return new Response(
          JSON.stringify({
            error: "Authentication failed",
            details: "Invalid API key or signature",
+          _version: VERSION,
          }),
          {
-           status: 401,
+          status: 200, // Return 200 with error details for graceful handling
            headers: { ...corsHeaders, "Content-Type": "application/json" },
          }
        );
@@ -234,9 +236,10 @@
          JSON.stringify({
            error: "Market not found",
            details: `No orderbook available for ticker: ${ticker}`,
+          _version: VERSION,
          }),
          {
-           status: 404,
+          status: 200, // Return 200 with error details for graceful handling
            headers: { ...corsHeaders, "Content-Type": "application/json" },
          }
        );
@@ -244,14 +247,15 @@
  
      if (!response.ok) {
        const errorText = await response.text();
-       console.error(`Kalshi API error [${response.status}]: ${errorText}`);
+      console.error(`[${VERSION}] Kalshi API error [${response.status}]: ${errorText}`);
        return new Response(
          JSON.stringify({
            error: `Kalshi API error: ${response.status}`,
            details: errorText,
+          _version: VERSION,
          }),
          {
-           status: response.status,
+          status: 200, // Return 200 with error details for graceful handling
            headers: { ...corsHeaders, "Content-Type": "application/json" },
          }
        );
