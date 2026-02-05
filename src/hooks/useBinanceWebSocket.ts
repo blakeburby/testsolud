@@ -52,7 +52,7 @@
      }
  
      console.log(`Opening WebSocket connection to Binance for ${symbol}...`);
-     const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol}@trade`);
+     const ws = new WebSocket(`wss://stream.binance.us:9443/ws/${symbol}@trade`);
  
      ws.onopen = () => {
        if (!isMountedRef.current) {
