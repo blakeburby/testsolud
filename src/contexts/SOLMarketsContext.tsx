@@ -1,9 +1,10 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
  import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline } from '@/types/sol-markets';
- import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceQuick, fetchSOLPriceWithHistory } from '@/lib/kalshi-client';
+import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceWithHistory } from '@/lib/kalshi-client';
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
+import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
 
 // Synthetic 15-minute window generator for when real contracts aren't available
 function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
@@ -201,9 +202,11 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    const { toast } = useToast();
    const priceIntervalRef = useRef<number | null>(null);
    const discoveryIntervalRef = useRef<number | null>(null);
-   const solPriceIntervalRef = useRef<number | null>(null);
    const lastContractEndRef = useRef<number | null>(null);
    const initialLoadDoneRef = useRef(false);
+
+  // Use WebSocket for real-time price updates
+  const { price: wsPrice, timestamp: wsTimestamp, isConnected: wsConnected } = useBinanceWebSocket('solusdt');
  
    const discoverMarkets = useCallback(async (forceNewSlot = false) => {
      try {
@@ -299,20 +302,6 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
      }
    }, [state.selectedMarket]);
  
-   // Quick price fetch for 1-second polling
-   const fetchSOLPriceQuickData = useCallback(async () => {
-     try {
-       const data = await fetchSOLPriceQuick();
-       if (data.price > 0) {
-         dispatch({ type: 'ADD_PRICE_POINT', payload: { price: data.price, timestamp: data.timestamp } });
-         dispatch({ type: 'SET_LIVE', payload: true });
-       }
-     } catch (error) {
-       console.error('Failed to fetch SOL price:', error);
-       dispatch({ type: 'SET_LIVE', payload: false });
-     }
-   }, []);
- 
    // Historical price fetch for initial load
    const fetchSOLPriceHistorical = useCallback(async () => {
      try {
@@ -377,13 +366,17 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
      };
    }, [state.selectedMarket?.ticker, fetchSelectedMarketPrice]);
  
-   // SOL price polling (every 1s for real-time chart)
+  // WebSocket price updates (replaces polling)
    useEffect(() => {
-     solPriceIntervalRef.current = window.setInterval(fetchSOLPriceQuickData, 500);
-     return () => {
-       if (solPriceIntervalRef.current) clearInterval(solPriceIntervalRef.current);
-     };
-   }, [fetchSOLPriceQuickData]);
+    if (wsPrice && wsTimestamp) {
+      dispatch({ type: 'ADD_PRICE_POINT', payload: { price: wsPrice, timestamp: wsTimestamp } });
+    }
+  }, [wsPrice, wsTimestamp]);
+
+  // Update live status based on WebSocket connection
+  useEffect(() => {
+    dispatch({ type: 'SET_LIVE', payload: wsConnected });
+  }, [wsConnected]);
  
    // Contract expiry check (every 1s)
    useEffect(() => {
