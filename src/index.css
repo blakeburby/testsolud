@@ -61,6 +61,8 @@ All colors MUST be HSL.
      
      /* Chart colors */
      --chart-1: 217 91% 60%;
+     --chart-line: 262 83% 58%;
+     --target-line: 142 76% 36%;
   }
 
   .dark {
@@ -107,6 +109,8 @@ All colors MUST be HSL.
      
      /* Chart colors */
      --chart-1: 217 91% 60%;
+     --chart-line: 262 83% 58%;
+     --target-line: 142 76% 45%;
   }
 }
 
