@@ -1,163 +1,244 @@
 
-# Fix Real-Time Chart Updates
+# Implement Authenticated Kalshi Orderbook API
 
-## Root Cause Analysis
+## Overview
 
-Two issues are preventing the chart from updating in real-time:
+Build a secure, production-ready client to fetch real orderbook data from Kalshi's authenticated REST API. The solution uses RSA-PSS with SHA256 signing, executed server-side in an edge function to protect the private key.
 
-### Issue 1: Duplicate Detection Threshold Too Aggressive
+## Architecture
 
-In `SOLMarketsContext.tsx` (lines 140-144), the reducer checks for duplicate timestamps within **500ms**:
-```typescript
-const isDuplicate = state.priceHistory.some(
-  p => Math.abs(p.time - timestamp) < 500
-);
-if (isDuplicate) return state;  // Skips the update!
+```
++------------------+     +----------------------+     +------------------+
+|  OrderbookLadder | --> | kalshi-orderbook     | --> | Kalshi API       |
+|  Component       |     | Edge Function        |     | /markets/{}/     |
+|                  |     |                      |     | orderbook        |
+|  - Polls every   |     | - Loads API key &    |     |                  |
+|    2-3 seconds   |     |   RSA private key    |     | Returns:         |
+|  - Displays bids |     | - Generates timestamp|     | - yes bids/asks  |
+|    and asks      |     | - Signs with RSA-PSS |     | - no bids/asks   |
++------------------+     +----------------------+     +------------------+
 ```
 
-**Problem**: Binance sends trades 10-50+ times per second. A 500ms window means only ~2 updates per second can get through - the rest are silently rejected.
+## Files to Create/Modify
 
-### Issue 2: Chart Window Filter May Exclude Live Data
+| File | Action | Purpose |
+|------|--------|---------|
+| `supabase/functions/kalshi-orderbook/index.ts` | Create | Edge function for authenticated API calls |
+| `src/lib/kalshi-client.ts` | Modify | Add `fetchKalshiOrderbook()` function |
+| `src/types/sol-markets.ts` | Modify | Add orderbook response types |
+| `src/components/sol-dashboard/OrderbookLadder.tsx` | Modify | Replace mock data with real API data |
+| `src/contexts/SOLMarketsContext.tsx` | Modify | Add orderbook state and polling |
 
-In `PriceChart.tsx` (lines 28-30):
+## Implementation Details
+
+### Step 1: Add Secrets for Kalshi API Credentials
+
+Two secrets need to be configured:
+- `KALSHI_API_KEY` - The API key ID from Kalshi
+- `KALSHI_PRIVATE_KEY` - The RSA private key (PEM format)
+
+### Step 2: Create Edge Function (`supabase/functions/kalshi-orderbook/index.ts`)
+
+The edge function handles:
+
+1. **Timestamp Generation**: Uses `Date.now()` for millisecond precision
+2. **Message Construction**: `{timestamp}{method}{path}` format (path without query params)
+3. **RSA-PSS Signing**: Uses Web Crypto API with:
+   - Algorithm: `RSA-PSS`
+   - Hash: `SHA-256`
+   - Salt length: 32 bytes (SHA-256 output length)
+4. **Request Headers**:
+   - `KALSHI-ACCESS-KEY`: API key ID
+   - `KALSHI-ACCESS-TIMESTAMP`: Generated timestamp
+   - `KALSHI-ACCESS-SIGNATURE`: Base64-encoded signature
+
 ```typescript
-const windowPrices = priceHistory.filter(
-  k => k.time >= windowStart && k.time <= windowEnd
+// Pseudocode for signing
+const timestamp = Date.now().toString();
+const method = "GET";
+const path = `/trade-api/v2/markets/${ticker}/orderbook`;
+const message = `${timestamp}${method}${path}`;
+
+const signature = await crypto.subtle.sign(
+  { name: "RSA-PSS", saltLength: 32 },
+  privateKey,
+  new TextEncoder().encode(message)
 );
+
+const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
 ```
 
-If the synthetic slot windows don't perfectly align with current time, or if there's any timezone/timestamp mismatch, the chart filters out all the live data.
+**Error Handling**:
+- 200: Return parsed orderbook
+- 401: Return authentication error with details
+- 404: Return market not found error
+- 500+: Implement exponential backoff retry (up to 3 attempts)
 
----
-
-## Solution
-
-### File 1: `src/contexts/SOLMarketsContext.tsx`
-
-**Change 1**: Reduce duplicate threshold from 500ms to 50ms (allowing ~20 updates/sec)
+### Step 3: Add TypeScript Types (`src/types/sol-markets.ts`)
 
 ```typescript
-// Line 140-144 - Change from:
-const isDuplicate = state.priceHistory.some(
-  p => Math.abs(p.time - timestamp) < 500
-);
+export interface KalshiOrderbookResponse {
+  orderbook: {
+    yes: Array<[number, number]>; // [price_cents, size]
+    no: Array<[number, number]>;
+  };
+  orderbook_fp?: {
+    yes_dollars: Array<[string, number]>;
+    no_dollars: Array<[string, number]>;
+  };
+}
 
-// To:
-const isDuplicate = state.priceHistory.some(
-  p => Math.abs(p.time - timestamp) < 50  // Allow more frequent updates
-);
+export interface OrderbookData {
+  yesBids: OrderbookLevel[];
+  yesAsks: OrderbookLevel[];
+  noBids: OrderbookLevel[];
+  noAsks: OrderbookLevel[];
+  lastPrice: number | null;
+  spread: number | null;
+  totalVolume: number;
+  lastUpdated: Date;
+}
 ```
 
-**Change 2**: Add debug logging to confirm WebSocket prices are being received
+### Step 4: Add Client Function (`src/lib/kalshi-client.ts`)
 
 ```typescript
-// Line 370-374 - Add logging:
-useEffect(() => {
-  if (wsPrice && wsTimestamp) {
-    console.log(`WebSocket price update: $${wsPrice.toFixed(4)} at ${new Date(wsTimestamp).toLocaleTimeString()}`);
-    dispatch({ type: 'ADD_PRICE_POINT', payload: { price: wsPrice, timestamp: wsTimestamp } });
-  }
-}, [wsPrice, wsTimestamp]);
-```
-
-### File 2: `src/components/sol-dashboard/PriceChart.tsx`
-
-**Change 3**: Extend chart window to include "now" even if outside slot bounds
-
-The chart should always show the current live data. Modify the filter to use a more lenient time window:
-
-```typescript
-// Lines 21-40 - Update to:
-const chartData = useMemo(() => {
-  if (!selectedSlot) return [];
-  
-  const now = Date.now();
-  const windowStart = selectedSlot.windowStart.getTime();
-  // Use the later of windowEnd or now+1minute to always show live data
-  const windowEnd = Math.max(selectedSlot.windowEnd.getTime(), now + 60000);
-  
-  // Filter prices - include anything from windowStart to now
-  const windowPrices = priceHistory.filter(
-    k => k.time >= windowStart && k.time <= windowEnd
+export async function fetchKalshiOrderbook(ticker: string): Promise<OrderbookData> {
+  const response = await fetch(
+    `${SUPABASE_URL}/functions/v1/kalshi-orderbook?ticker=${ticker}`
   );
   
-  // Sort and format
-  return windowPrices
-    .sort((a, b) => a.time - b.time)
-    .map(k => ({
-      time: k.time,
-      price: k.close,
-      label: format(new Date(k.time), 'h:mm:ss'),
-    }));
-}, [priceHistory, selectedSlot]);
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch orderbook');
+  }
+  
+  return response.json();
+}
 ```
 
-**Change 4**: Add debug display showing data points count
+### Step 5: Update Context (`src/contexts/SOLMarketsContext.tsx`)
 
-Add a temporary debug indicator to verify data is flowing:
+Add orderbook state and polling:
 
 ```typescript
-// After line 69 (loading state), add:
-console.log(`Chart data points: ${chartData.length}, priceHistory: ${priceHistory.length}`);
+// New state fields
+orderbook: OrderbookData | null;
+orderbookLoading: boolean;
+orderbookError: string | null;
+
+// New action types
+| { type: 'SET_ORDERBOOK'; payload: OrderbookData }
+| { type: 'SET_ORDERBOOK_LOADING'; payload: boolean }
+| { type: 'SET_ORDERBOOK_ERROR'; payload: string | null }
+
+// Poll orderbook every 2 seconds when market is selected
+useEffect(() => {
+  if (!state.selectedMarket || state.selectedMarket.ticker.startsWith('SYNTHETIC-')) {
+    return;
+  }
+  
+  const fetchOrderbook = async () => {
+    try {
+      const data = await fetchKalshiOrderbook(state.selectedMarket.ticker);
+      dispatch({ type: 'SET_ORDERBOOK', payload: data });
+    } catch (error) {
+      dispatch({ type: 'SET_ORDERBOOK_ERROR', payload: error.message });
+    }
+  };
+  
+  fetchOrderbook();
+  const interval = setInterval(fetchOrderbook, 2000);
+  return () => clearInterval(interval);
+}, [state.selectedMarket?.ticker]);
 ```
 
----
+### Step 6: Update OrderbookLadder Component
+
+Replace mock data generation with real data consumption:
+
+```typescript
+export function OrderbookLadder() {
+  const { selectedMarket, selectedSlot, orderbook, orderbookLoading } = useSOLMarkets();
+  
+  // Show loading state
+  if (orderbookLoading && !orderbook) {
+    return <OrderbookSkeleton />;
+  }
+  
+  // Use real data from context
+  const { yesBids, yesAsks, noBids, noAsks, spread, totalVolume } = orderbook || {
+    yesBids: [], yesAsks: [], noBids: [], noAsks: [],
+    spread: null, totalVolume: 0
+  };
+  
+  // Render based on activeTab ('up' = yes orders, 'down' = no orders)
+  const bids = activeTab === 'up' ? yesBids : noBids;
+  const asks = activeTab === 'up' ? yesAsks : noAsks;
+  
+  // ... rest of component
+}
+```
+
+## Security Considerations
+
+1. **Private Key Protection**: RSA private key stored as backend secret, never exposed to client
+2. **Server-Side Signing**: All signature generation happens in edge function
+3. **No Hardcoded Credentials**: Timestamp and signature regenerated for every request
+4. **Rate Limiting**: 2-second polling interval respects Kalshi rate limits
 
 ## Technical Details
 
-### Data Flow After Fix
+### RSA-PSS Signing in Deno/Edge Functions
 
-```
-Binance WebSocket
-       |
-       | trade event every ~20-100ms
-       v
-useBinanceWebSocket (hook)
-       |
-       | setState({price, timestamp})
-       v
-SOLMarketsProvider
-       |
-       | useEffect detects wsPrice change
-       | dispatch ADD_PRICE_POINT
-       v
-Reducer
-       |
-       | Duplicate check (now 50ms)
-       | Append to priceHistory
-       | Update currentPrice
-       v
-PriceChart
-       |
-       | useMemo recomputes chartData
-       | (includes all data up to now)
-       v
-Recharts re-renders
+```typescript
+// Import private key from PEM format
+async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  const pemHeader = "-----BEGIN PRIVATE KEY-----";
+  const pemFooter = "-----END PRIVATE KEY-----";
+  const pemContents = pem
+    .replace(pemHeader, "")
+    .replace(pemFooter, "")
+    .replace(/\s/g, "");
+  
+  const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+  
+  return crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer,
+    { name: "RSA-PSS", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+}
 ```
 
-### Expected Update Rate
+### Kalshi Orderbook Response Format
 
-| Before | After |
-|--------|-------|
-| ~2 updates/sec (500ms threshold) | ~20 updates/sec (50ms threshold) |
-| Chart may show 0 points | Chart shows all live points |
+```json
+{
+  "orderbook": {
+    "yes": [[45, 100], [44, 250], [43, 500]],
+    "no": [[55, 150], [56, 300], [57, 200]]
+  },
+  "orderbook_fp": {
+    "yes_dollars": [["0.45", 100], ["0.44", 250]],
+    "no_dollars": [["0.55", 150], ["0.56", 300]]
+  }
+}
+```
 
----
+## Fallback Behavior
 
-## Files to Modify
+- If credentials not configured: Show "API key required" message with setup instructions
+- If authentication fails: Display error and retain last known orderbook state
+- If market not found: Clear orderbook and show "No orderbook available"
+- For synthetic markets: Continue showing mock data with "Demo" label
 
-| File | Changes |
-|------|---------|
-| `src/contexts/SOLMarketsContext.tsx` | Reduce duplicate threshold to 50ms, add debug logging |
-| `src/components/sol-dashboard/PriceChart.tsx` | Extend window filter to always include current time |
+## Testing Steps
 
----
-
-## Validation Steps
-
-After implementation:
-1. Open the dashboard and watch the chart
-2. Check console for "WebSocket price update" logs appearing multiple times per second
-3. Check console for "Chart data points" logs showing increasing count
-4. Verify the chart line grows continuously without page refresh
-5. Compare displayed price with live Binance SOL price
+1. Configure KALSHI_API_KEY and KALSHI_PRIVATE_KEY secrets
+2. Navigate to dashboard with an active KXSOL15M market
+3. Verify orderbook displays real bid/ask data
+4. Confirm orderbook updates every 2 seconds
+5. Test error handling by temporarily invalidating credentials
