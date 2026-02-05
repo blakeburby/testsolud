@@ -104,7 +104,13 @@
    event_ticker: string;
    title: string;
    subtitle?: string;
-   status: string;
+   stat subtitle?: string;
+  yes_sub_title?: string;
+  no_sub_title?: string;
+  open_time: string;
+  floor_strike?: number;
+  cap_strike?: number;
+us: string;
    open_time: string;
    close_time: string;
    expiration_time: string;
