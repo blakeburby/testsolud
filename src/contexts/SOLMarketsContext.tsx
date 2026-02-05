@@ -1,5 +1,4 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
- 
 import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData, PendingOrder } from '@/types/sol-markets';
  import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceWithHistory, fetchKalshiOrderbook } from '@/lib/kalshi-client';
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
