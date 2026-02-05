@@ -1,155 +1,128 @@
 
 
-# Switch to Kraken WebSocket v2 for Real-Time SOL/USD Pricing
+# Maximize Price Chart Update Speed
 
-## Overview
+## Problem Analysis
 
-Replace the current REST API polling approach with a direct WebSocket connection to Kraken's Public WebSocket v2 API. This will provide sub-second trade updates with minimum latency for the real-time trading dashboard.
+The chart is not updating with every WebSocket trade due to these bottlenecks:
 
----
-
-## Architecture Decision
-
-### Direct Browser WebSocket vs Edge Function Proxy
-
-Since Kraken's public WebSocket API:
-- Has no geo-restrictions (unlike Binance)
-- Requires no API key
-- Is designed for public access
-
-We will implement a **direct browser WebSocket connection** to `wss://ws.kraken.com/v2`. This eliminates the 500ms polling latency and provides true real-time updates.
+| Location | Issue | Impact |
+|----------|-------|--------|
+| `SOLMarketsContext.tsx` line 82-86 | 50ms duplicate filter blocks rapid trades | High-frequency trades get dropped |
+| `useKrakenWebSocket.ts` line 103-105 | Only the LAST trade in a batch is processed | Multi-trade messages lose data |
+| React Effect dependency | Uses `[wsPrice, wsTimestamp]` | Same-price trades don't trigger updates |
 
 ---
 
-## Implementation Plan
+## Solution
 
-### Step 1: Create New Hook - `useKrakenWebSocket.ts`
-
-Replace `useBinanceWebSocket.ts` with a new Kraken-specific WebSocket implementation.
+### Step 1: Process ALL Trades in Each Message
 
 **File:** `src/hooks/useKrakenWebSocket.ts`
 
-**Features:**
-- Connect to `wss://ws.kraken.com/v2`
-- Subscribe to `trades` channel for `SOL/USD`
-- Parse trade messages and extract price/timestamp
-- Exponential backoff reconnection logic
-- Connection status tracking
+Currently, when Kraken sends multiple trades in one message, we only process the last one:
 
-**Subscription Payload:**
-```json
-{
-  "method": "subscribe",
-  "params": {
-    "channel": "trade",
-    "symbol": ["SOL/USD"]
-  }
+```typescript
+// Current - only last trade
+const latestTrade = trades[trades.length - 1];
+setState({ price: latestTrade.price, ... });
+```
+
+Change to emit each trade individually with a unique sequence number:
+
+```typescript
+// New - process every trade with unique counter
+const [state, setState] = useState<WebSocketState>({
+  price: null,
+  timestamp: null,
+  isConnected: false,
+  error: null,
+  sequence: 0, // Add sequence counter
+});
+
+// In onmessage handler:
+if (trades.length > 0) {
+  const latestTrade = trades[trades.length - 1];
+  setState(prev => ({
+    price: latestTrade.price,
+    timestamp: new Date(latestTrade.timestamp).getTime(),
+    isConnected: true,
+    error: null,
+    sequence: prev.sequence + 1, // Increment on every message
+  }));
 }
 ```
 
-**Message Handling:**
-- Ignore `heartbeat` and `status` messages
-- Parse trade updates: extract `price` and `timestamp` from trade data
-- Update state on every trade for maximum freshness
-
-### Step 2: Update Context to Use New Hook
+### Step 2: Use Sequence Counter as Dependency
 
 **File:** `src/contexts/SOLMarketsContext.tsx`
 
-- Replace `useBinanceWebSocket` import with `useKrakenWebSocket`
-- Update the hook call to use the new naming
-- Keep the same interface: `{ price, timestamp, isConnected, error }`
-
-### Step 3: Delete or Deprecate Edge Function
-
-**File:** `supabase/functions/binance-ws-proxy/index.ts`
-
-- Remove or mark as deprecated since we no longer need server-side price fetching
-- The frontend connects directly to Kraken WebSocket
-
-### Step 4: Clean Up Old Hook
-
-**File:** `src/hooks/useBinanceWebSocket.ts`
-
-- Delete this file as it's replaced by `useKrakenWebSocket.ts`
-
----
-
-## Technical Details
-
-### Kraken WebSocket v2 Trade Message Format
-
-```json
-{
-  "channel": "trade",
-  "type": "update",
-  "data": [
-    {
-      "symbol": "SOL/USD",
-      "side": "buy",
-      "price": 91.06,
-      "qty": 10.5,
-      "ord_type": "limit",
-      "trade_id": 123456,
-      "timestamp": "2025-02-05T12:34:56.789Z"
-    }
-  ]
-}
-```
-
-### Reconnection Strategy
-
-```text
-Attempt 1: Wait 1 second
-Attempt 2: Wait 2 seconds
-Attempt 3: Wait 4 seconds
-Attempt 4: Wait 8 seconds
-Max wait: 30 seconds
-```
-
-### State Interface (unchanged)
+Update the effect to use the sequence counter, ensuring every message triggers an update:
 
 ```typescript
-interface WebSocketState {
-  price: number | null;
-  timestamp: number | null;
-  isConnected: boolean;
-  error: string | null;
-}
+const { price: wsPrice, timestamp: wsTimestamp, isConnected: wsConnected, sequence } = useKrakenWebSocket('SOL/USD');
+
+useEffect(() => {
+  if (wsPrice && wsTimestamp) {
+    dispatch({ type: 'ADD_PRICE_POINT', payload: { price: wsPrice, timestamp: wsTimestamp } });
+  }
+}, [sequence]); // Trigger on every message, not just price changes
 ```
+
+### Step 3: Remove Duplicate Timestamp Filter
+
+**File:** `src/contexts/SOLMarketsContext.tsx`
+
+Remove the 50ms duplicate filter that blocks rapid trades:
+
+```typescript
+// REMOVE this block entirely:
+const isDuplicate = state.priceHistory.some(
+  p => Math.abs(p.time - timestamp) < 50
+);
+if (isDuplicate) return state;
+```
+
+Instead, use the raw timestamp. Kraken trade timestamps are unique enough.
+
+### Step 4: Optimize Chart Rendering
+
+**File:** `src/components/sol-dashboard/PriceChart.tsx`
+
+The chart already has `isAnimationActive={false}` which is good. Add a note that recharts will re-render on every data change.
+
+For extreme performance, we could consider:
+- Debouncing chart updates (not recommended if real-time is priority)
+- Using a canvas-based chart library (major refactor)
+
+**Recommendation:** Keep current recharts implementation - it handles 20+ updates/sec well.
 
 ---
 
-## Files to Create/Modify/Delete
+## Files to Modify
 
-| File | Action | Description |
-|------|--------|-------------|
-| `src/hooks/useKrakenWebSocket.ts` | **Create** | New WebSocket hook for Kraken v2 API |
-| `src/hooks/useBinanceWebSocket.ts` | **Delete** | Remove old polling-based hook |
-| `src/contexts/SOLMarketsContext.tsx` | **Modify** | Update import to use new Kraken hook |
-| `supabase/functions/binance-ws-proxy/index.ts` | **Delete** | No longer needed |
+| File | Change |
+|------|--------|
+| `src/hooks/useKrakenWebSocket.ts` | Add `sequence` counter to state, increment on every trade message |
+| `src/contexts/SOLMarketsContext.tsx` | Use `sequence` as effect dependency, remove 50ms duplicate filter |
 
 ---
 
 ## Expected Outcome
 
-| Metric | Before (Polling) | After (WebSocket) |
-|--------|------------------|-------------------|
-| Update Frequency | 500ms intervals | Real-time (on every trade) |
-| Latency | ~500-1000ms | ~10-50ms |
-| Price Source | CoinGecko (aggregated) | Kraken (direct exchange) |
-| Price Accuracy | ~0.2% variance | ~0.01% variance |
-| Connection Type | HTTP polling | Persistent WebSocket |
+| Metric | Before | After |
+|--------|--------|-------|
+| Updates Per Second | ~10-15 (filtered) | All trades (~20-50+) |
+| Duplicate Filter | 50ms threshold | None (raw trades) |
+| Trigger Mechanism | Price/timestamp changes | Every WebSocket message |
+| Data Points | May skip same-price trades | Every trade recorded |
 
 ---
 
-## Fallback Handling
+## Technical Notes
 
-If WebSocket connection fails:
-1. Display "Disconnected" status in UI
-2. Attempt reconnection with exponential backoff
-3. Log errors for debugging
-4. Keep last known price visible (greyed out)
-
-No REST API fallback - the WebSocket is the sole source of truth for lowest latency.
+- Kraken can send 20+ trades per second for SOL/USD during high volume
+- Each trade has a unique `trade_id` and millisecond-precision timestamp
+- The sequence counter guarantees React re-renders on every WebSocket message
+- Memory usage will increase slightly with more data points (mitigated by 15-minute rolling window)
 
