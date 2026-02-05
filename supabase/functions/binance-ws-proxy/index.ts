@@ -1,14 +1,16 @@
  // Edge function to fetch SOL/USDT price from Binance
- // Uses REST API since edge functions are stateless (can't maintain WebSocket)
+// Uses CoinGecko API as primary source (no geo-restrictions)
+// Falls back to Binance.US if needed
  
  const corsHeaders = {
    'Access-Control-Allow-Origin': '*',
    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
  };
  
- interface BinanceTickerResponse {
-   symbol: string;
-   price: string;
+ interface CoinGeckoSimplePrice {
+   solana: {
+     usd: number;
+   };
  }
  
  Deno.serve(async (req) => {
@@ -18,22 +20,79 @@
    }
    
    try {
-     // Fetch current price from Binance REST API
-     // This endpoint returns the latest price and is very fast
-     const response = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT');
-     
-     if (!response.ok) {
-       throw new Error(`Binance API error: ${response.status}`);
+    let price: number | null = null;
+    let source = 'unknown';
+    
+    // Try CoinGecko first (no geo-restrictions, free tier)
+    try {
+      const cgResponse = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
+        {
+          headers: {
+            'Accept': 'application/json',
+          },
+        }
+      );
+      
+      if (cgResponse.ok) {
+        const data: CoinGeckoSimplePrice = await cgResponse.json();
+        if (data?.solana?.usd) {
+          price = data.solana.usd;
+          source = 'coingecko';
+        }
+      }
+    } catch (cgError) {
+      console.warn('CoinGecko failed:', cgError);
      }
      
-     const data: BinanceTickerResponse = await response.json();
-     const price = parseFloat(data.price);
+    // Fallback to Binance.US (works in more regions than binance.com)
+    if (price === null) {
+      try {
+        const binanceUsResponse = await fetch(
+          'https://api.binance.us/api/v3/ticker/price?symbol=SOLUSD'
+        );
+        
+        if (binanceUsResponse.ok) {
+          const data = await binanceUsResponse.json();
+          if (data?.price) {
+            price = parseFloat(data.price);
+            source = 'binance.us';
+          }
+        }
+      } catch (binanceError) {
+        console.warn('Binance.US failed:', binanceError);
+      }
+    }
+    
+    // Final fallback to CoinPaprika
+    if (price === null) {
+      try {
+        const cpResponse = await fetch(
+          'https://api.coinpaprika.com/v1/tickers/sol-solana'
+        );
+        
+        if (cpResponse.ok) {
+          const data = await cpResponse.json();
+          if (data?.quotes?.USD?.price) {
+            price = data.quotes.USD.price;
+            source = 'coinpaprika';
+          }
+        }
+      } catch (cpError) {
+        console.warn('CoinPaprika failed:', cpError);
+      }
+    }
+    
+    if (price === null) {
+      throw new Error('All price sources failed');
+    }
      
      return new Response(
        JSON.stringify({
          price,
          timestamp: Date.now(),
          connected: true,
+        source,
        }),
        {
          headers: {
@@ -44,7 +103,7 @@
        }
      );
    } catch (error) {
-     console.error('Failed to fetch Binance price:', error);
+    console.error('Failed to fetch SOL price:', error);
      
      return new Response(
        JSON.stringify({
