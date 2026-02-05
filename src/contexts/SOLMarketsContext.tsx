@@ -1,6 +1,6 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
  import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline } from '@/types/sol-markets';
- import { fetchKalshiMarkets, fetchMarketPrice, fetchSOLPrice } from '@/lib/dome-client';
+ import { fetchKalshiMarkets, fetchMarketPrice, fetchSOLPriceQuick, fetchSOLPriceWithHistory } from '@/lib/dome-client';
  import { filterSOL15MinMarkets, groupMarketsIntoTimeSlots } from '@/lib/sol-market-filter';
  import { useToast } from '@/hooks/use-toast';
  
@@ -13,8 +13,10 @@
    | { type: 'SELECT_DIRECTION'; payload: 'up' | 'down' }
    | { type: 'SET_CURRENT_PRICE'; payload: number }
    | { type: 'SET_PRICE_HISTORY'; payload: PriceKline[] }
+   | { type: 'ADD_PRICE_POINT'; payload: { price: number; timestamp: number } }
    | { type: 'UPDATE_MARKET_PRICES'; payload: { ticker: string; prices: Partial<SOLMarket> } }
-   | { type: 'SET_LIVE'; payload: boolean };
+   | { type: 'SET_LIVE'; payload: boolean }
+   | { type: 'RESET_FOR_NEW_CONTRACT'; payload: TimeSlot };
  
  const initialState: SOLDashboardState = {
    currentPrice: null,
@@ -53,6 +55,35 @@
        return { ...state, currentPrice: action.payload };
      case 'SET_PRICE_HISTORY':
        return { ...state, priceHistory: action.payload };
+     case 'ADD_PRICE_POINT': {
+       const { price, timestamp } = action.payload;
+       const FIFTEEN_MINUTES = 15 * 60 * 1000;
+       const cutoffTime = timestamp - FIFTEEN_MINUTES;
+       
+       // Check for duplicate timestamps (within 500ms)
+       const isDuplicate = state.priceHistory.some(
+         p => Math.abs(p.time - timestamp) < 500
+       );
+       if (isDuplicate) return state;
+       
+       // Create new price point
+       const newPoint: PriceKline = {
+         time: timestamp,
+         open: price,
+         high: price,
+         low: price,
+         close: price,
+         volume: 0,
+       };
+       
+       // Filter to 15-minute window and append new point
+       const filteredHistory = state.priceHistory.filter(p => p.time >= cutoffTime);
+       return {
+         ...state,
+         priceHistory: [...filteredHistory, newPoint],
+         currentPrice: price,
+       };
+     }
      case 'UPDATE_MARKET_PRICES': {
        const markets = state.markets.map(m =>
          m.ticker === action.payload.ticker
@@ -66,6 +97,16 @@
      }
      case 'SET_LIVE':
        return { ...state, isLive: action.payload };
+     case 'RESET_FOR_NEW_CONTRACT': {
+       const slot = action.payload;
+       const selectedMarket = slot.markets.find(m => m.direction === state.selectedDirection) || slot.markets[0] || null;
+       return {
+         ...state,
+         selectedSlot: slot,
+         selectedMarket,
+         priceHistory: [], // Clear history for new contract
+       };
+     }
      default:
        return state;
    }
@@ -85,8 +126,10 @@
    const priceIntervalRef = useRef<number | null>(null);
    const discoveryIntervalRef = useRef<number | null>(null);
    const solPriceIntervalRef = useRef<number | null>(null);
+   const lastContractEndRef = useRef<number | null>(null);
+   const initialLoadDoneRef = useRef(false);
  
-   const discoverMarkets = useCallback(async () => {
+   const discoverMarkets = useCallback(async (forceNewSlot = false) => {
      try {
        dispatch({ type: 'SET_LOADING', payload: true });
        const rawMarkets = await fetchKalshiMarkets('open', 100);
@@ -96,11 +139,18 @@
        dispatch({ type: 'SET_MARKETS', payload: solMarkets });
        dispatch({ type: 'SET_TIME_SLOTS', payload: timeSlots });
  
-       // Auto-select active or next available slot
-       if (!state.selectedSlot) {
-         const activeSlot = timeSlots.find(s => s.isActive) || timeSlots.find(s => !s.isPast);
+       // Auto-select active or next available slot (force on contract expiry)
+       if (!state.selectedSlot || forceNewSlot) {
+         const now = Date.now();
+         const activeSlot = timeSlots.find(s => s.isActive && s.windowEnd.getTime() > now) 
+           || timeSlots.find(s => !s.isPast && s.windowEnd.getTime() > now);
          if (activeSlot) {
-           dispatch({ type: 'SELECT_SLOT', payload: activeSlot });
+           if (forceNewSlot) {
+             dispatch({ type: 'RESET_FOR_NEW_CONTRACT', payload: activeSlot });
+           } else {
+             dispatch({ type: 'SELECT_SLOT', payload: activeSlot });
+           }
+           lastContractEndRef.current = activeSlot.windowEnd.getTime();
          }
        }
  
@@ -144,19 +194,48 @@
      }
    }, [state.selectedMarket]);
  
-   const fetchSOLPriceData = useCallback(async (includeKlines: boolean = false) => {
+   // Quick price fetch for 1-second polling
+   const fetchSOLPriceQuickData = useCallback(async () => {
      try {
-       const data = await fetchSOLPrice(includeKlines);
-       dispatch({ type: 'SET_CURRENT_PRICE', payload: data.price });
-       if (data.klines) {
-         dispatch({ type: 'SET_PRICE_HISTORY', payload: data.klines });
+       const data = await fetchSOLPriceQuick();
+       if (data.price > 0) {
+         dispatch({ type: 'ADD_PRICE_POINT', payload: { price: data.price, timestamp: data.timestamp } });
+         dispatch({ type: 'SET_LIVE', payload: true });
        }
-       dispatch({ type: 'SET_LIVE', payload: true });
      } catch (error) {
        console.error('Failed to fetch SOL price:', error);
        dispatch({ type: 'SET_LIVE', payload: false });
      }
    }, []);
+ 
+   // Historical price fetch for initial load
+   const fetchSOLPriceHistorical = useCallback(async () => {
+     try {
+       const data = await fetchSOLPriceWithHistory();
+       if (data.price > 0) {
+         dispatch({ type: 'SET_CURRENT_PRICE', payload: data.price });
+         if (data.klines && data.klines.length > 0) {
+           dispatch({ type: 'SET_PRICE_HISTORY', payload: data.klines });
+         }
+         dispatch({ type: 'SET_LIVE', payload: true });
+       }
+     } catch (error) {
+       console.error('Failed to fetch historical SOL price:', error);
+       dispatch({ type: 'SET_LIVE', payload: false });
+     }
+   }, []);
+ 
+   // Check for contract expiry and auto-switch
+   const checkContractExpiry = useCallback(() => {
+     if (!lastContractEndRef.current) return;
+     
+     const now = Date.now();
+     if (now >= lastContractEndRef.current) {
+       console.log('Contract expired, discovering new markets...');
+       discoverMarkets(true);
+       fetchSOLPriceHistorical();
+     }
+   }, [discoverMarkets, fetchSOLPriceHistorical]);
  
    const selectSlot = useCallback((slot: TimeSlot) => {
      dispatch({ type: 'SELECT_SLOT', payload: slot });
@@ -168,36 +247,43 @@
  
    // Initial load
    useEffect(() => {
-     discoverMarkets();
-     fetchSOLPriceData(true);
+     discoverMarkets(false);
+     fetchSOLPriceHistorical();
+     initialLoadDoneRef.current = true;
    }, []);
  
    // Discovery refresh (every 60s)
    useEffect(() => {
-     discoveryIntervalRef.current = window.setInterval(discoverMarkets, 60000);
+     discoveryIntervalRef.current = window.setInterval(() => discoverMarkets(false), 60000);
      return () => {
        if (discoveryIntervalRef.current) clearInterval(discoveryIntervalRef.current);
      };
    }, [discoverMarkets]);
  
-   // Market price polling (every 5s)
+   // Market price polling (every 1s for real-time odds)
    useEffect(() => {
      if (state.selectedMarket) {
        fetchSelectedMarketPrice();
-       priceIntervalRef.current = window.setInterval(fetchSelectedMarketPrice, 5000);
+       priceIntervalRef.current = window.setInterval(fetchSelectedMarketPrice, 1000);
      }
      return () => {
        if (priceIntervalRef.current) clearInterval(priceIntervalRef.current);
      };
    }, [state.selectedMarket?.ticker, fetchSelectedMarketPrice]);
  
-   // SOL price polling (every 3s)
+   // SOL price polling (every 1s for real-time chart)
    useEffect(() => {
-     solPriceIntervalRef.current = window.setInterval(() => fetchSOLPriceData(true), 3000);
+     solPriceIntervalRef.current = window.setInterval(fetchSOLPriceQuickData, 1000);
      return () => {
        if (solPriceIntervalRef.current) clearInterval(solPriceIntervalRef.current);
      };
-   }, [fetchSOLPriceData]);
+   }, [fetchSOLPriceQuickData]);
+ 
+   // Contract expiry check (every 1s)
+   useEffect(() => {
+     const expiryInterval = window.setInterval(checkContractExpiry, 1000);
+     return () => clearInterval(expiryInterval);
+   }, [checkContractExpiry]);
  
    const value: SOLMarketsContextValue = {
      ...state,
