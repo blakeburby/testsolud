@@ -4,7 +4,7 @@ import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData,
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
-import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
+ import { useKrakenWebSocket } from '@/hooks/useKrakenWebSocket';
  
  interface ExtendedDashboardState extends SOLDashboardState {
    orderbook: OrderbookData | null;
@@ -162,7 +162,7 @@ import { useBinanceWebSocket } from '@/hooks/useBinanceWebSocket';
    const initialLoadDoneRef = useRef(false);
 
   // Use WebSocket for real-time price updates
-  const { price: wsPrice, timestamp: wsTimestamp, isConnected: wsConnected } = useBinanceWebSocket('solusdt');
+   const { price: wsPrice, timestamp: wsTimestamp, isConnected: wsConnected } = useKrakenWebSocket('SOL/USD');
  
    const discoverMarkets = useCallback(async (forceNewSlot = false) => {
      try {
