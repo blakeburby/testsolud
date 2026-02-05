@@ -1,118 +1,257 @@
 
 
-# Fix Kalshi API Data Mapping Issues
+# Implement Real-Time SOL Price Feed via Binance WebSocket
 
-Three issues need to be fixed in `src/lib/sol-market-filter.ts` to correctly parse Kalshi API responses.
-
----
-
-## Issue 1: Wrong `strike_type` Comparison
-
-**Problem:** The API returns `"greater_or_equal"` but the code only checks for `"greater"`, causing direction to default to `"down"`.
-
-**Location:** Line 102
-
-**Current code:**
-```typescript
-direction = m.strike_type === 'greater' ? 'up' : 'down';
-```
-
-**Fix:**
-```typescript
-direction = (m.strike_type === 'greater' || m.strike_type === 'greater_or_equal') ? 'up' : 'down';
-```
+Replace the current polling-based price updates with a persistent WebSocket connection to Binance for true real-time, low-latency price streaming.
 
 ---
 
-## Issue 2: `windowStart` Calculated Instead of Using API
+## Current Architecture
 
-**Problem:** The code calculates `windowStart` as `close_time - 15 minutes` instead of using the API-provided `open_time`.
-
-**Location:** Lines 79-81
-
-**Current code:**
-```typescript
-const windowEnd = closeTime;
-const windowStart = new Date(windowEnd.getTime() - 15 * 60 * 1000);
+```text
++----------------+       500ms polling       +-------------------+
+|   Frontend     | -----------------------> |  Edge Function    |
+|   (Context)    |                          |  (binance-price)  |
++----------------+                          +-------------------+
+       |                                            |
+       v                                            v
+  State Update                              Dome API / CoinGecko
+  (dispatch)                                (REST calls)
 ```
 
-**Fix:**
+**Problems with current approach:**
+- 500ms polling creates artificial latency
+- Each poll is a full HTTP round-trip (~100-300ms)
+- Misses trades between poll intervals
+- Higher server load and API rate limits
+
+---
+
+## New Architecture
+
+```text
++----------------+    WebSocket (persistent)    +------------------+
+|   Frontend     | <-------------------------> |  Binance Stream  |
+|   (Custom Hook)|                             |  wss://stream... |
++----------------+                             +------------------+
+       |
+       v
+  State Update (instant)
+  via Context dispatch
+```
+
+**Benefits:**
+- Updates on every trade (~10-50+ per second during active trading)
+- Zero polling latency
+- No API costs (free Binance WebSocket)
+- Single persistent connection per session
+
+---
+
+## Implementation Plan
+
+### File 1: Create WebSocket Hook
+
+**New file: `src/hooks/useBinanceWebSocket.ts`**
+
+A custom React hook that:
+- Opens persistent WebSocket to `wss://stream.binance.com:9443/ws/solusdt@trade`
+- Parses incoming trade messages (`p` = price, `T` = timestamp)
+- Returns current price, connection status, and timestamp
+- Implements exponential backoff reconnect (1s -> 2s -> 4s -> 8s -> 15s max)
+- Cleans up on unmount
+
 ```typescript
-const windowStart = new Date(m.open_time);
-const windowEnd = new Date(m.close_time);
+interface BinanceTradeMessage {
+  e: "trade";       // Event type
+  s: string;        // Symbol (SOLUSDT)
+  p: string;        // Price
+  q: string;        // Quantity
+  T: number;        // Trade timestamp
+}
+
+interface WebSocketState {
+  price: number | null;
+  timestamp: number | null;
+  isConnected: boolean;
+  error: string | null;
+}
+```
+
+### File 2: Update Context to Use WebSocket
+
+**Modify: `src/contexts/SOLMarketsContext.tsx`**
+
+Changes:
+1. Import and use the new `useBinanceWebSocket` hook
+2. Remove `solPriceIntervalRef` polling interval
+3. Remove `fetchSOLPriceQuickData` polling function
+4. Add `useEffect` to dispatch price updates when WebSocket price changes
+5. Update `isLive` state based on WebSocket connection status
+
+```typescript
+// Before (polling):
+useEffect(() => {
+  solPriceIntervalRef.current = window.setInterval(fetchSOLPriceQuickData, 500);
+  return () => { ... };
+}, [fetchSOLPriceQuickData]);
+
+// After (WebSocket):
+const { price: wsPrice, timestamp: wsTimestamp, isConnected } = useBinanceWebSocket();
+
+useEffect(() => {
+  if (wsPrice && wsTimestamp) {
+    dispatch({ type: 'ADD_PRICE_POINT', payload: { price: wsPrice, timestamp: wsTimestamp } });
+  }
+}, [wsPrice, wsTimestamp]);
+
+useEffect(() => {
+  dispatch({ type: 'SET_LIVE', payload: isConnected });
+}, [isConnected]);
+```
+
+### File 3: Keep Edge Function for Historical Data Only
+
+**Modify: `supabase/functions/binance-price/index.ts`**
+
+The edge function is still needed for:
+- Initial historical price data (15-minute chart history)
+- Fallback if WebSocket fails
+
+No structural changes needed, just ensure it works for `?historical=true` mode.
+
+---
+
+## WebSocket Message Flow
+
+```text
+Binance Stream                    useBinanceWebSocket           SOLMarketsContext              UI
+     |                                  |                              |                        |
+     |--- trade message --------------->|                              |                        |
+     |    {p: "91.25", T: 1738...}      |                              |                        |
+     |                                  |--- price update ------------>|                        |
+     |                                  |    {price: 91.25, ts: ...}   |                        |
+     |                                  |                              |--- dispatch --------->|
+     |                                  |                              |    ADD_PRICE_POINT    |
+     |                                  |                              |                        |
+     |--- next trade message (50ms) --->|                              |                        |
+     |                                  |--- price update ------------>|                        |
+     .                                  .                              .                        .
+     .    (continuous stream)           .                              .                        .
 ```
 
 ---
 
-## Issue 3: Timezone Display
+## Reconnection Strategy
 
-**Context:** The API returns UTC times but Kalshi displays in ET. This isn't a parsing bug - the dates are correct, they just need to be formatted for ET display in the UI components.
+| Attempt | Delay | Cumulative |
+|---------|-------|------------|
+| 1       | 1s    | 1s         |
+| 2       | 2s    | 3s         |
+| 3       | 4s    | 7s         |
+| 4       | 8s    | 15s        |
+| 5+      | 15s   | +15s each  |
 
-**Note:** The strike price discrepancy ($90.68 vs $91.00) appears to be Kalshi's website rounding for display. The API value is the accurate one for trading purposes.
+On successful reconnect, reset backoff to 1s.
 
 ---
 
-## File Changes
+## Edge Cases Handled
 
-| File | Changes |
-|------|---------|
-| `src/lib/sol-market-filter.ts` | Fix `strike_type` comparison to include `greater_or_equal`; Use `open_time` from API for `windowStart` |
+| Scenario | Handling |
+|----------|----------|
+| Initial page load | Fetch historical data from edge function, then switch to WebSocket |
+| WebSocket disconnect | Show "reconnecting" state, use exponential backoff |
+| Browser tab hidden | WebSocket stays open (browser manages) |
+| Component unmount | Clean close WebSocket connection |
+| Network restored | Auto-reconnect via backoff logic |
+| Invalid message | Skip and log warning |
+
+---
+
+## Validation Checklist
+
+- [ ] Price updates multiple times per second
+- [ ] "Live" indicator shows green when connected
+- [ ] No memory leaks (single WebSocket instance)
+- [ ] No duplicate connections
+- [ ] Graceful reconnection after network loss
+- [ ] Chart continues working during brief disconnects
+
+---
+
+## Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `src/hooks/useBinanceWebSocket.ts` | Create | WebSocket connection hook |
+| `src/contexts/SOLMarketsContext.tsx` | Modify | Replace polling with WebSocket |
 
 ---
 
 ## Technical Details
 
-### Updated `parseKalshiFullMarket` Function
+### useBinanceWebSocket Hook Implementation
 
 ```typescript
-export function parseKalshiFullMarket(m: KalshiFullMarketResponse): SOLMarket | null {
-  // Use open_time and close_time directly from API
-  const windowStart = new Date(m.open_time);
-  const windowEnd = new Date(m.close_time);
-  const closeTime = windowEnd;
+export function useBinanceWebSocket(symbol: string = 'solusdt') {
+  const [state, setState] = useState<WebSocketState>({
+    price: null,
+    timestamp: null,
+    isConnected: false,
+    error: null,
+  });
   
-  // Strike price logic (unchanged)
-  let strikePrice = 0;
-  if (m.functional_strike) {
-    strikePrice = parseFloat(m.functional_strike);
-  } else if (m.floor_strike) {
-    strikePrice = m.floor_strike;
-  } else if (m.cap_strike) {
-    strikePrice = m.cap_strike;
-  } else if (m.yes_sub_title) {
-    const match = m.yes_sub_title.match(/\$(\d+\.?\d*)/);
-    if (match) strikePrice = parseFloat(match[1]);
-  } else {
-    strikePrice = extractStrikePrice(m.title) ?? 0;
-  }
-  
-  // Fix: Handle both 'greater' and 'greater_or_equal' as 'up'
-  let direction: 'up' | 'down' = 'up';
-  if (m.strike_type) {
-    direction = (m.strike_type === 'greater' || m.strike_type === 'greater_or_equal') 
-      ? 'up' 
-      : 'down';
-  } else if (m.floor_strike) {
-    direction = 'up';
-  } else if (m.cap_strike) {
-    direction = 'down';
-  } else {
-    const titleLower = m.title.toLowerCase();
-    if (titleLower.includes('down') || titleLower.includes('below') || titleLower.includes('less')) {
-      direction = 'down';
-    }
-  }
-  
-  // ... rest unchanged
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+
+  const connect = useCallback(() => {
+    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol}@trade`);
+    
+    ws.onopen = () => {
+      setState(prev => ({ ...prev, isConnected: true, error: null }));
+      reconnectAttemptRef.current = 0;
+    };
+    
+    ws.onmessage = (event) => {
+      const data: BinanceTradeMessage = JSON.parse(event.data);
+      if (data.e === 'trade' && data.p) {
+        setState(prev => ({
+          ...prev,
+          price: parseFloat(data.p),
+          timestamp: data.T,
+        }));
+      }
+    };
+    
+    ws.onerror = (error) => {
+      setState(prev => ({ ...prev, error: 'Connection error' }));
+    };
+    
+    ws.onclose = () => {
+      setState(prev => ({ ...prev, isConnected: false }));
+      scheduleReconnect();
+    };
+    
+    wsRef.current = ws;
+  }, [symbol]);
+
+  const scheduleReconnect = () => {
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 15000);
+    reconnectAttemptRef.current++;
+    reconnectTimeoutRef.current = window.setTimeout(connect, delay);
+  };
+
+  useEffect(() => {
+    connect();
+    return () => {
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, [connect]);
+
+  return state;
 }
 ```
-
----
-
-## Expected Results
-
-After these fixes:
-- Markets with `strike_type: "greater_or_equal"` will correctly show as "up" direction
-- Window times will match the actual contract open/close times from Kalshi API
-- Time slot pills will display the correct 15-minute windows
 
