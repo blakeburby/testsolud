@@ -1,4 +1,5 @@
- import { SOLMarketsProvider } from '@/contexts/SOLMarketsContext';
+import { SOLMarketsProvider } from '@/contexts/SOLMarketsContext';
+// Dashboard container with context provider
  import { PriceHeader } from './PriceHeader';
  import { PriceSection } from './PriceSection';
  import { PriceChart } from './PriceChart';
