@@ -85,6 +85,8 @@ export interface KalshiFullMarketResponse {
   expiration_time: string;
   floor_strike?: number;
   cap_strike?: number;
+  functional_strike?: string;
+  strike_type?: string;
   yes_bid?: number;
   yes_bid_dollars?: string;
   yes_ask?: number;
