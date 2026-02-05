@@ -1,7 +1,10 @@
  import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
  
-// Price APIs
- const COINGECKO_API = "https://api.coingecko.com/api/v3";
+// Dome API - primary source for fastest price data
+const DOME_API = "https://api.domeapi.io/v1";
+
+// Fallback APIs
+const COINGECKO_API = "https://api.coingecko.com/api/v3";
 const COINPAPRIKA_API = "https://api.coinpaprika.com/v1";
 
 // In-memory cache for fallback
@@ -28,6 +31,57 @@ function symbolToCoinPaprikaId(symbol: string): string {
     "ETHUSDT": "eth-ethereum",
   };
   return mapping[symbol.toUpperCase()] || "sol-solana";
+}
+
+function symbolToDomeCurrency(symbol: string): string {
+  // Dome API uses lowercase alphanumeric format (e.g., "solusdt", "btcusdt")
+  return symbol.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function fetchFromDomeApi(symbol: string): Promise<{ price: number; timestamp: number } | null> {
+  const domeApiKey = Deno.env.get("DOME_API_KEY");
+  if (!domeApiKey) {
+    console.warn("DOME_API_KEY not configured, falling back to other sources");
+    return null;
+  }
+
+  const currency = symbolToDomeCurrency(symbol);
+  
+  try {
+    const response = await fetch(
+      `${DOME_API}/crypto-prices/binance?currency=${currency}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${domeApiKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    
+    if (!response.ok) {
+      console.error(`Dome API error: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    
+    if (data.prices && data.prices.length > 0) {
+      const latestPrice = data.prices[0];
+      const price = typeof latestPrice.value === 'string' 
+        ? parseFloat(latestPrice.value) 
+        : latestPrice.value;
+      
+      return {
+        price,
+        timestamp: latestPrice.timestamp,
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error("Dome API fetch error:", error);
+    return null;
+  }
 }
 
 async function fetchFromCoinGecko(coinId: string): Promise<number | null> {
@@ -57,10 +111,17 @@ async function fetchFromCoinPaprika(coinId: string): Promise<number | null> {
 }
 
 async function fetchPriceWithFallback(symbol: string): Promise<{ price: number; source: string }> {
+  // Try Dome API first (fastest, most up-to-date)
+  const domeResult = await fetchFromDomeApi(symbol);
+  if (domeResult && domeResult.price > 0) {
+    lastKnownPrice = { price: domeResult.price, timestamp: domeResult.timestamp };
+    return { price: domeResult.price, source: "dome-binance" };
+  }
+  
   const coinGeckoId = symbolToCoinGeckoId(symbol);
   const coinPaprikaId = symbolToCoinPaprikaId(symbol);
   
-  // Try CoinGecko first (3 attempts with backoff)
+  // Fallback: Try CoinGecko (3 attempts with backoff)
   for (let attempt = 0; attempt < 3; attempt++) {
     const price = await fetchFromCoinGecko(coinGeckoId);
     if (price && price > 0) {
@@ -83,6 +144,61 @@ async function fetchPriceWithFallback(symbol: string): Promise<{ price: number; 
   }
   
   return { price: 0, source: "unavailable" };
+}
+
+async function fetchHistoricalFromDome(symbol: string, startTime: number, endTime: number): Promise<Array<{
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}>> {
+  const domeApiKey = Deno.env.get("DOME_API_KEY");
+  if (!domeApiKey) return [];
+
+  const currency = symbolToDomeCurrency(symbol);
+  
+  try {
+    const response = await fetch(
+      `${DOME_API}/crypto-prices/binance?currency=${currency}&start_time=${startTime}&end_time=${endTime}&limit=100`,
+      {
+        headers: {
+          'Authorization': `Bearer ${domeApiKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    
+    if (!response.ok) {
+      console.error(`Dome API historical error: ${response.status}`);
+      return [];
+    }
+    
+    const data = await response.json();
+    
+    if (!data.prices || data.prices.length === 0) return [];
+    
+    // Convert Dome price points to klines format
+    return data.prices.map((p: { symbol: string; value: string | number; timestamp: number }, i: number, arr: Array<{ value: string | number; timestamp: number }>) => {
+      const price = typeof p.value === 'string' ? parseFloat(p.value) : p.value;
+      const prevPrice = i > 0 
+        ? (typeof arr[i - 1].value === 'string' ? parseFloat(arr[i - 1].value as string) : arr[i - 1].value as number)
+        : price;
+      
+      return {
+        time: p.timestamp,
+        open: prevPrice,
+        high: Math.max(prevPrice, price) * 1.0002,
+        low: Math.min(prevPrice, price) * 0.9998,
+        close: price,
+        volume: 0,
+      };
+    });
+  } catch (error) {
+    console.error("Dome API historical fetch error:", error);
+    return [];
+  }
 }
 
  serve(async (req) => {
@@ -112,8 +228,10 @@ async function fetchPriceWithFallback(symbol: string): Promise<{ price: number; 
      // HISTORICAL MODE: Fetch real 15-minute history from market_chart
       const coinId = symbolToCoinGeckoId(symbol);
       const { price: currentPrice, source } = await fetchPriceWithFallback(symbol);
+     const now = Date.now();
+     const twentyMinutesAgo = now - 20 * 60 * 1000;
       
-      // Try to get historical data from CoinGecko
+     // Try to get historical data from Dome API first
       let klines: Array<{
         time: number;
         open: number;
@@ -124,14 +242,17 @@ async function fetchPriceWithFallback(symbol: string): Promise<{ price: number; 
       }> = [];
       
       try {
+       // Try Dome API first for historical data
+       klines = await fetchHistoricalFromDome(symbol, twentyMinutesAgo, now);
+       
+       // Fallback to CoinGecko if Dome returns no data
+       if (klines.length === 0) {
         const chartResponse = await fetch(
           `${COINGECKO_API}/coins/${coinId}/market_chart?vs_currency=usd&days=1&precision=2`
         );
         
         if (chartResponse.ok) {
           const chartData = await chartResponse.json();
-          const now = Date.now();
-          const twentyMinutesAgo = now - 20 * 60 * 1000;
           
           if (chartData.prices && Array.isArray(chartData.prices)) {
             const recentPrices = chartData.prices.filter(
@@ -149,24 +270,27 @@ async function fetchPriceWithFallback(symbol: string): Promise<{ price: number; 
                 volume: 0,
               };
             });
-            
-            // Add current price as latest point
-            if (klines.length > 0 && currentPrice > 0) {
-              const lastKline = klines[klines.length - 1];
-              klines.push({
-                time: now,
-                open: lastKline.close,
-                high: Math.max(lastKline.close, currentPrice),
-                low: Math.min(lastKline.close, currentPrice),
-                close: currentPrice,
-                volume: 0,
-              });
-            }
           }
+         }
+       }
+       
+       // Add current price as latest point
+       if (klines.length > 0 && currentPrice > 0) {
+         const lastKline = klines[klines.length - 1];
+         if (now - lastKline.time > 500) { // Only add if more than 500ms since last point
+           klines.push({
+             time: now,
+             open: lastKline.close,
+             high: Math.max(lastKline.close, currentPrice),
+             low: Math.min(lastKline.close, currentPrice),
+             close: currentPrice,
+             volume: 0,
+           });
+         }
        }
       } catch (error) {
         console.error("Historical chart fetch error:", error);
-     }
+      }
  
      return new Response(
        JSON.stringify({
