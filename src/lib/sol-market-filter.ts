@@ -81,15 +81,30 @@ export function isSOLMarket(ticker: string): boolean {
    const windowStart = new Date(windowEnd.getTime() - 15 * 60 * 1000);
    
    // Get strike from functional_strike or extract from title
-   const strikePrice = m.functional_strike 
-     ? parseFloat(m.functional_strike)
-     : extractStrikePrice(m.title) ?? 0;
+  let strikePrice = 0;
+  if (m.functional_strike) {
+    strikePrice = parseFloat(m.functional_strike);
+  } else if (m.floor_strike) {
+    strikePrice = m.floor_strike;
+  } else if (m.cap_strike) {
+    strikePrice = m.cap_strike;
+  } else if (m.yes_sub_title) {
+    // Parse from "Price to beat: $90.7959"
+    const match = m.yes_sub_title.match(/\$(\d+\.?\d*)/);
+    if (match) strikePrice = parseFloat(match[1]);
+  } else {
+    strikePrice = extractStrikePrice(m.title) ?? 0;
+  }
    
    // Determine direction from strike_type or title
    let direction: 'up' | 'down' = 'up';
    if (m.strike_type) {
      direction = m.strike_type === 'greater' ? 'up' : 'down';
-   } else {
+  } else if (m.floor_strike) {
+    direction = 'up'; // floor_strike means price must go above
+  } else if (m.cap_strike) {
+    direction = 'down'; // cap_strike means price must go below
+  } else {
      const titleLower = m.title.toLowerCase();
      if (titleLower.includes('down') || titleLower.includes('below') || titleLower.includes('less')) {
        direction = 'down';
