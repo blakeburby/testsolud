@@ -1,6 +1,6 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
- import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline } from '@/types/sol-markets';
-import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceWithHistory } from '@/lib/kalshi-client';
+ import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData } from '@/types/sol-markets';
+ import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceWithHistory, fetchKalshiOrderbook } from '@/lib/kalshi-client';
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
@@ -81,6 +81,12 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
   return slots;
 }
  
+ interface ExtendedDashboardState extends SOLDashboardState {
+   orderbook: OrderbookData | null;
+   orderbookLoading: boolean;
+   orderbookError: string | null;
+ }
+ 
  type Action =
    | { type: 'SET_LOADING'; payload: boolean }
    | { type: 'SET_ERROR'; payload: string | null }
@@ -93,9 +99,13 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    | { type: 'ADD_PRICE_POINT'; payload: { price: number; timestamp: number } }
    | { type: 'UPDATE_MARKET_PRICES'; payload: { ticker: string; prices: Partial<SOLMarket> } }
    | { type: 'SET_LIVE'; payload: boolean }
-   | { type: 'RESET_FOR_NEW_CONTRACT'; payload: TimeSlot };
+   | { type: 'RESET_FOR_NEW_CONTRACT'; payload: TimeSlot }
+   | { type: 'SET_ORDERBOOK'; payload: OrderbookData }
+   | { type: 'SET_ORDERBOOK_LOADING'; payload: boolean }
+   | { type: 'SET_ORDERBOOK_ERROR'; payload: string | null }
+   | { type: 'CLEAR_ORDERBOOK' };
  
- const initialState: SOLDashboardState = {
+ const initialState: ExtendedDashboardState = {
    currentPrice: null,
    priceHistory: [],
    markets: [],
@@ -107,9 +117,12 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
    error: null,
    lastRefresh: null,
    isLive: false,
+   orderbook: null,
+   orderbookLoading: false,
+   orderbookError: null,
  };
  
- function reducer(state: SOLDashboardState, action: Action): SOLDashboardState {
+ function reducer(state: ExtendedDashboardState, action: Action): ExtendedDashboardState {
    switch (action.type) {
      case 'SET_LOADING':
        return { ...state, isLoading: action.payload };
@@ -183,14 +196,23 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
          selectedSlot: slot,
          selectedMarket,
          priceHistory: [], // Clear history for new contract
+         orderbook: null, // Clear orderbook for new contract
        };
      }
+     case 'SET_ORDERBOOK':
+       return { ...state, orderbook: action.payload, orderbookLoading: false, orderbookError: null };
+     case 'SET_ORDERBOOK_LOADING':
+       return { ...state, orderbookLoading: action.payload };
+     case 'SET_ORDERBOOK_ERROR':
+       return { ...state, orderbookError: action.payload, orderbookLoading: false };
+     case 'CLEAR_ORDERBOOK':
+       return { ...state, orderbook: null, orderbookError: null };
      default:
        return state;
    }
  }
  
- interface SOLMarketsContextValue extends SOLDashboardState {
+ interface SOLMarketsContextValue extends ExtendedDashboardState {
    selectSlot: (slot: TimeSlot) => void;
    selectDirection: (direction: 'up' | 'down') => void;
    refreshMarkets: () => Promise<void>;
@@ -385,6 +407,30 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
      const expiryInterval = window.setInterval(checkContractExpiry, 1000);
      return () => clearInterval(expiryInterval);
    }, [checkContractExpiry]);
+ 
+   // Orderbook polling (every 2s when market is selected)
+   useEffect(() => {
+     // Skip for synthetic markets or when no market selected
+     if (!state.selectedMarket || state.selectedMarket.ticker.startsWith('SYNTHETIC-')) {
+       dispatch({ type: 'CLEAR_ORDERBOOK' });
+       return;
+     }
+ 
+     const fetchOrderbook = async () => {
+       try {
+         dispatch({ type: 'SET_ORDERBOOK_LOADING', payload: true });
+         const data = await fetchKalshiOrderbook(state.selectedMarket!.ticker);
+         dispatch({ type: 'SET_ORDERBOOK', payload: data });
+       } catch (error) {
+         console.error('Failed to fetch orderbook:', error);
+         dispatch({ type: 'SET_ORDERBOOK_ERROR', payload: error instanceof Error ? error.message : 'Failed to fetch orderbook' });
+       }
+     };
+ 
+     fetchOrderbook();
+     const orderbookInterval = window.setInterval(fetchOrderbook, 2000);
+     return () => clearInterval(orderbookInterval);
+   }, [state.selectedMarket?.ticker]);
  
    const value: SOLMarketsContextValue = {
      ...state,

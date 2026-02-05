@@ -100,3 +100,26 @@ export interface KalshiFullMarketResponse {
   volume: number;
   volume_24h: number;
 }
+ 
+ export interface KalshiOrderbookResponse {
+   orderbook: {
+     yes: Array<[number, number]>; // [price_cents, size]
+     no: Array<[number, number]>;
+   };
+   orderbook_fp?: {
+     yes_dollars: Array<[string, number]>;
+     no_dollars: Array<[string, number]>;
+   };
+ }
+ 
+ export interface OrderbookData {
+   ticker: string;
+   yesBids: OrderbookLevel[];
+   yesAsks: OrderbookLevel[];
+   noBids: OrderbookLevel[];
+   noAsks: OrderbookLevel[];
+   lastPrice: number | null;
+   spread: number | null;
+   totalVolume: number;
+   lastUpdated: Date;
+ }
