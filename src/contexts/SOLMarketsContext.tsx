@@ -1,13 +1,10 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData, PendingOrder } from '@/types/sol-markets';
-import type { TradeRecord, QuantIndicators } from '@/types/quant';
  import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchKalshiOrderbook } from '@/lib/kalshi-client';
  import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
  import { useMultiSourcePrice } from '@/hooks/useMultiSourcePrice';
-import { useTradeBuffer } from '@/hooks/useTradeBuffer';
-import { useQuantAnalytics } from '@/hooks/useQuantAnalytics';
  
  interface ExtendedDashboardState extends SOLDashboardState {
    orderbook: OrderbookData | null;
@@ -145,9 +142,6 @@ import { useQuantAnalytics } from '@/hooks/useQuantAnalytics';
    setPendingOrder: (order: PendingOrder | null) => void;
    clearPendingOrder: () => void;
   wsConnected: boolean;
-  trades: TradeRecord[];
-  indicators: QuantIndicators;
-  priceSources: { kraken: boolean; coinbase: boolean; binance: boolean };
  }
  
  const SOLMarketsContext = createContext<SOLMarketsContextValue | null>(null);
@@ -162,26 +156,6 @@ import { useQuantAnalytics } from '@/hooks/useQuantAnalytics';
 
   // Use multi-source WebSocket for high-frequency price updates
   const { price: wsPrice, timestamp: wsTimestamp, isConnected: wsConnected, sequence: wsSequence, sources } = useMultiSourcePrice('SOL/USD');
-
-  // Trade buffer for quant analytics
-  const { trades, addTrade } = useTradeBuffer();
-  const indicators = useQuantAnalytics(trades);
-
-  // Register trade callback to capture all trades
-  useEffect(() => {
-    // When we get a new price update, add it to trade buffer
-    if (wsPrice && wsTimestamp) {
-      // Determine source from which connection is active
-      const source = sources.binance ? 'binance' : sources.coinbase ? 'coinbase' : 'kraken';
-      addTrade({
-        price: wsPrice,
-        size: 1, // Size not available from current hook
-        timestamp: wsTimestamp,
-        source: source as 'kraken' | 'coinbase' | 'binance',
-        side: 'unknown',
-      });
-    }
-  }, [wsSequence]);
  
    const discoverMarkets = useCallback(async (forceNewSlot = false) => {
      try {
@@ -355,9 +329,6 @@ import { useQuantAnalytics } from '@/hooks/useQuantAnalytics';
    const value: SOLMarketsContextValue = {
      ...state,
     wsConnected,
-    trades,
-    indicators,
-    priceSources: sources,
      selectSlot,
      selectDirection,
      refreshMarkets: discoverMarkets,

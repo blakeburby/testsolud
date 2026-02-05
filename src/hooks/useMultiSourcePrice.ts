@@ -1,15 +1,6 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { TradeRecord } from '@/types/quant';
+ import { useState, useEffect, useRef, useCallback } from 'react';
  
-export interface TradeUpdate {
-  price: number;
-  size: number;
-  timestamp: number;
-  source: 'kraken' | 'coinbase' | 'binance' | 'okx';
-  side: 'buy' | 'sell' | 'unknown';
-}
-
-export interface PriceState {
+ interface PriceState {
    price: number | null;
    timestamp: number | null;
    isConnected: boolean;
@@ -19,13 +10,11 @@ export interface PriceState {
      coinbase: boolean;
      binance: boolean;
    };
-  lastTrade: TradeUpdate | null;
  }
  
  const KRAKEN_WS_URL = 'wss://ws.kraken.com/v2';
  const COINBASE_WS_URL = 'wss://ws-feed.exchange.coinbase.com';
-// Use Binance.com global for higher liquidity (USDT pair)
-const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
+ const BINANCE_WS_URL = 'wss://stream.binance.us:9443/ws/solusd@aggTrade';
  
  const MAX_RECONNECT_DELAY = 30000;
  const INITIAL_RECONNECT_DELAY = 1000;
@@ -37,7 +26,6 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
      isConnected: false,
      sequence: 0,
      sources: { kraken: false, coinbase: false, binance: false },
-    lastTrade: null,
    });
  
    const krakenWsRef = useRef<WebSocket | null>(null);
@@ -49,38 +37,23 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
    const binanceReconnectRef = useRef(0);
    
    const isMountedRef = useRef(true);
-  const tradeCallbackRef = useRef<((trade: TradeUpdate) => void) | null>(null);
  
    const getReconnectDelay = useCallback((attempts: number) => {
      const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, attempts);
      return Math.min(delay, MAX_RECONNECT_DELAY);
    }, []);
  
-  const updatePrice = useCallback((
-    price: number, 
-    timestamp: number, 
-    source: 'kraken' | 'coinbase' | 'binance' | 'okx',
-    size: number = 1,
-    side: 'buy' | 'sell' | 'unknown' = 'unknown'
-  ) => {
+   const updatePrice = useCallback((price: number, timestamp: number, source: string) => {
      if (!isMountedRef.current) return;
      
-    const tradeUpdate: TradeUpdate = { price, size, timestamp, source, side };
-    
      setState(prev => ({
        ...prev,
        price,
        timestamp,
        sequence: prev.sequence + 1,
        isConnected: prev.sources.kraken || prev.sources.coinbase || prev.sources.binance,
-      lastTrade: tradeUpdate,
      }));
      
-    // Call trade callback if registered
-    if (tradeCallbackRef.current) {
-      tradeCallbackRef.current(tradeUpdate);
-    }
-    
      console.log(`[${source}] $${price.toFixed(4)} | ${new Date(timestamp).toLocaleTimeString()}`);
    }, []);
  
@@ -129,14 +102,7 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
          
          if (message.channel === 'trade' && message.type === 'update' && message.data?.length > 0) {
            const trade = message.data[message.data.length - 1];
-            const side = trade.side === 'buy' ? 'buy' : trade.side === 'sell' ? 'sell' : 'unknown';
-            updatePrice(
-              trade.price, 
-              new Date(trade.timestamp).getTime(), 
-              'kraken',
-              parseFloat(trade.qty || '1'),
-              side as 'buy' | 'sell' | 'unknown'
-            );
+           updatePrice(trade.price, new Date(trade.timestamp).getTime(), 'Kraken');
          }
        } catch (err) {
          // Ignore parse errors
@@ -188,9 +154,7 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
          if (message.type === 'ticker' && message.price) {
            const price = parseFloat(message.price);
            const timestamp = message.time ? new Date(message.time).getTime() : Date.now();
-            const size = parseFloat(message.last_size || '1');
-            const side = message.side === 'buy' ? 'buy' : message.side === 'sell' ? 'sell' : 'unknown';
-            updatePrice(price, timestamp, 'coinbase', size, side as 'buy' | 'sell' | 'unknown');
+           updatePrice(price, timestamp, 'Coinbase');
          }
        } catch (err) {
          // Ignore parse errors
@@ -232,14 +196,11 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
        try {
          const message = JSON.parse(event.data);
          
-          // aggTrade format: { e: "aggTrade", p: "price", q: "quantity", m: isBuyerMaker, T: timestamp }
+         // aggTrade format: { e: "aggTrade", p: "price", T: timestamp }
          if (message.e === 'aggTrade' && message.p) {
            const price = parseFloat(message.p);
            const timestamp = message.T || Date.now();
-            const size = parseFloat(message.q || '1');
-            // m = true means buyer is maker, so the trade is a sell
-            const side = message.m === true ? 'sell' : message.m === false ? 'buy' : 'unknown';
-            updatePrice(price, timestamp, 'binance', size, side as 'buy' | 'sell' | 'unknown');
+           updatePrice(price, timestamp, 'Binance.US');
          }
        } catch (err) {
          // Ignore parse errors
@@ -274,13 +235,5 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/solusdt@aggTrade';
      };
    }, [connectKraken, connectCoinbase, connectBinance]);
  
-  // Allow external registration of trade callback
-  const onTrade = useCallback((callback: (trade: TradeUpdate) => void) => {
-    tradeCallbackRef.current = callback;
-  }, []);
-
-  return useMemo(() => ({
-    ...state,
-    onTrade,
-  }), [state, onTrade]);
+   return state;
  }
