@@ -36,55 +36,6 @@
    return data.market;
  }
  
- // Fast mode for 1-second polling - only fetches current price
- export async function fetchSOLPriceQuick(): Promise<{
-   price: number;
-   timestamp: number;
- }> {
-   const params = new URLSearchParams({ symbol: 'SOLUSDT' });
-   const response = await fetch(`${SUPABASE_URL}/functions/v1/binance-price?${params}`);
- 
-   if (!response.ok) {
-     const error = await response.json();
-     throw new Error(error.error || 'Failed to fetch SOL price');
-   }
- 
-   return response.json();
- }
- 
- // Historical mode for initial load - fetches price + klines
- export async function fetchSOLPriceWithHistory(): Promise<{
-   price: number;
-   timestamp: number;
-   klines: Array<{
-     time: number;
-     open: number;
-     high: number;
-     low: number;
-     close: number;
-     volume: number;
-   }>;
- }> {
-   const params = new URLSearchParams({
-     symbol: 'SOLUSDT',
-     historical: 'true',
-   });
- 
-   const response = await fetch(`${SUPABASE_URL}/functions/v1/binance-price?${params}`);
- 
-   if (!response.ok) {
-     const error = await response.json();
-     throw new Error(error.error || 'Failed to fetch SOL price');
-   }
- 
-   const data = await response.json();
-   return {
-     price: data.price,
-     timestamp: data.timestamp,
-     klines: data.klines || [],
-   };
- }
- 
  // Fetch orderbook for a specific market (authenticated)
  export async function fetchKalshiOrderbook(ticker: string): Promise<OrderbookData> {
    const params = new URLSearchParams({ ticker });
