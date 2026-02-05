@@ -57,6 +57,16 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+         trading: {
+           up: "hsl(var(--trading-up))",
+           down: "hsl(var(--trading-down))",
+         },
+         timer: {
+           warning: "hsl(var(--timer-warning))",
+         },
+         chart: {
+           "1": "hsl(var(--chart-1))",
+         },
       },
       borderRadius: {
         lg: "var(--radius)",

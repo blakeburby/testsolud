@@ -53,6 +53,14 @@ All colors MUST be HSL.
     --sidebar-border: 220 13% 91%;
 
     --sidebar-ring: 217.2 91.2% 59.8%;
+     
+     /* Trading colors */
+     --trading-up: 142 76% 36%;
+     --trading-down: 0 84% 60%;
+     --timer-warning: 48 96% 53%;
+     
+     /* Chart colors */
+     --chart-1: 217 91% 60%;
   }
 
   .dark {
@@ -91,6 +99,14 @@ All colors MUST be HSL.
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+     
+     /* Trading colors */
+     --trading-up: 142 76% 45%;
+     --trading-down: 0 84% 60%;
+     --timer-warning: 48 96% 53%;
+     
+     /* Chart colors */
+     --chart-1: 217 91% 60%;
   }
 }
 
