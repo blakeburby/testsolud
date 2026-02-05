@@ -1,128 +1,148 @@
 
 
-# Maximize Price Chart Update Speed
+# High-Frequency SOL/USD Price Updates - Multiple Times Per Second
 
-## Problem Analysis
+## Problem Identified
 
-The chart is not updating with every WebSocket trade due to these bottlenecks:
+The console logs reveal the real issue:
 
-| Location | Issue | Impact |
-|----------|-------|--------|
-| `SOLMarketsContext.tsx` line 82-86 | 50ms duplicate filter blocks rapid trades | High-frequency trades get dropped |
-| `useKrakenWebSocket.ts` line 103-105 | Only the LAST trade in a batch is processed | Multi-trade messages lose data |
-| React Effect dependency | Uses `[wsPrice, wsTimestamp]` | Same-price trades don't trigger updates |
+```
+[Kraken WS] Trade: $91.2000 | 11:35:58 PM
+[Kraken WS] Trade: $91.1700 | 11:36:07 PM  ← 9 seconds gap
+[Kraken WS] Trade: $91.1700 | 11:36:12 PM  ← 5 seconds gap
+```
+
+**Kraken's SOL/USD pair has low trading volume** - trades only occur every 5-10 seconds. This is not a code issue; it's an exchange liquidity issue.
 
 ---
 
-## Solution
+## Solution: Multi-Source WebSocket Strategy
 
-### Step 1: Process ALL Trades in Each Message
+Combine multiple data sources to achieve sub-second updates:
 
-**File:** `src/hooks/useKrakenWebSocket.ts`
+### Architecture
 
-Currently, when Kraken sends multiple trades in one message, we only process the last one:
-
-```typescript
-// Current - only last trade
-const latestTrade = trades[trades.length - 1];
-setState({ price: latestTrade.price, ... });
+```
++------------------+     +------------------+     +------------------+
+|   Kraken WS      |     |   Coinbase WS    |     |  Binance.US WS   |
+|   (trade)        |     |   (ticker)       |     |  (aggTrade)      |
++--------+---------+     +--------+---------+     +--------+---------+
+         |                        |                        |
+         v                        v                        v
+    +----+------------------------+------------------------+----+
+    |                    Price Aggregator                       |
+    |  - Dedup by timestamp                                     |
+    |  - Take most recent price                                 |
+    |  - Emit on ANY source update                              |
+    +---------------------------+-------------------------------+
+                                |
+                                v
+                    +----------+----------+
+                    |   Chart Component   |
+                    |   (updates ~10x/sec)|
+                    +---------------------+
 ```
 
-Change to emit each trade individually with a unique sequence number:
+---
 
-```typescript
-// New - process every trade with unique counter
-const [state, setState] = useState<WebSocketState>({
-  price: null,
-  timestamp: null,
-  isConnected: false,
-  error: null,
-  sequence: 0, // Add sequence counter
-});
+## Implementation Plan
 
-// In onmessage handler:
-if (trades.length > 0) {
-  const latestTrade = trades[trades.length - 1];
-  setState(prev => ({
-    price: latestTrade.price,
-    timestamp: new Date(latestTrade.timestamp).getTime(),
-    isConnected: true,
-    error: null,
-    sequence: prev.sequence + 1, // Increment on every message
-  }));
+### Step 1: Create Multi-Source WebSocket Hook
+
+**File:** `src/hooks/useMultiSourcePrice.ts` (new)
+
+Connect to multiple exchanges simultaneously:
+
+| Source | Channel | Update Frequency | Notes |
+|--------|---------|------------------|-------|
+| Kraken | `trade` | ~0.1-0.2/sec | Most accurate (actual trades) |
+| Coinbase | `ticker` | ~1-5/sec | Best bid/ask updates |
+| Binance.US | `aggTrade` | ~5-20/sec | Highest frequency, no geo-block |
+
+**Key Features:**
+- Connect to all 3 sources simultaneously
+- Track last update time from each source
+- Emit the most recent price on ANY source update
+- Sequence counter increments on every message from any source
+
+### Step 2: Coinbase WebSocket Integration
+
+**Endpoint:** `wss://ws-feed.exchange.coinbase.com`
+
+**Subscription:**
+```json
+{
+  "type": "subscribe",
+  "product_ids": ["SOL-USD"],
+  "channels": ["ticker"]
 }
 ```
 
-### Step 2: Use Sequence Counter as Dependency
+**Ticker Message (updates on every order book change):**
+```json
+{
+  "type": "ticker",
+  "product_id": "SOL-USD",
+  "price": "91.06",
+  "time": "2025-02-05T23:37:00.000Z"
+}
+```
+
+### Step 3: Binance.US WebSocket Integration
+
+**Endpoint:** `wss://stream.binance.us:9443/ws/solusd@aggTrade`
+
+**Message Format:**
+```json
+{
+  "e": "aggTrade",
+  "s": "SOLUSD",
+  "p": "91.06",
+  "T": 1738795020000
+}
+```
+
+### Step 4: Update Context to Use Multi-Source Hook
 
 **File:** `src/contexts/SOLMarketsContext.tsx`
 
-Update the effect to use the sequence counter, ensuring every message triggers an update:
-
+Replace:
 ```typescript
-const { price: wsPrice, timestamp: wsTimestamp, isConnected: wsConnected, sequence } = useKrakenWebSocket('SOL/USD');
-
-useEffect(() => {
-  if (wsPrice && wsTimestamp) {
-    dispatch({ type: 'ADD_PRICE_POINT', payload: { price: wsPrice, timestamp: wsTimestamp } });
-  }
-}, [sequence]); // Trigger on every message, not just price changes
+const { ... } = useKrakenWebSocket('SOL/USD');
 ```
 
-### Step 3: Remove Duplicate Timestamp Filter
-
-**File:** `src/contexts/SOLMarketsContext.tsx`
-
-Remove the 50ms duplicate filter that blocks rapid trades:
-
+With:
 ```typescript
-// REMOVE this block entirely:
-const isDuplicate = state.priceHistory.some(
-  p => Math.abs(p.time - timestamp) < 50
-);
-if (isDuplicate) return state;
+const { price, timestamp, isConnected, sequence } = useMultiSourcePrice('SOL/USD');
 ```
-
-Instead, use the raw timestamp. Kraken trade timestamps are unique enough.
-
-### Step 4: Optimize Chart Rendering
-
-**File:** `src/components/sol-dashboard/PriceChart.tsx`
-
-The chart already has `isAnimationActive={false}` which is good. Add a note that recharts will re-render on every data change.
-
-For extreme performance, we could consider:
-- Debouncing chart updates (not recommended if real-time is priority)
-- Using a canvas-based chart library (major refactor)
-
-**Recommendation:** Keep current recharts implementation - it handles 20+ updates/sec well.
 
 ---
 
-## Files to Modify
+## Files to Create/Modify
 
-| File | Change |
-|------|--------|
-| `src/hooks/useKrakenWebSocket.ts` | Add `sequence` counter to state, increment on every trade message |
-| `src/contexts/SOLMarketsContext.tsx` | Use `sequence` as effect dependency, remove 50ms duplicate filter |
+| File | Action | Description |
+|------|--------|-------------|
+| `src/hooks/useMultiSourcePrice.ts` | **Create** | New hook connecting to Kraken + Coinbase + Binance.US |
+| `src/hooks/useKrakenWebSocket.ts` | **Keep** | Used internally by multi-source hook |
+| `src/contexts/SOLMarketsContext.tsx` | **Modify** | Switch to useMultiSourcePrice |
 
 ---
 
 ## Expected Outcome
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Updates Per Second | ~10-15 (filtered) | All trades (~20-50+) |
-| Duplicate Filter | 50ms threshold | None (raw trades) |
-| Trigger Mechanism | Price/timestamp changes | Every WebSocket message |
-| Data Points | May skip same-price trades | Every trade recorded |
+| Metric | Current (Kraken only) | After (Multi-source) |
+|--------|----------------------|----------------------|
+| Updates/Second | 0.1-0.2 | 5-20+ |
+| Source | Single exchange | 3 exchanges |
+| Latency | Depends on Kraken trades | Best of 3 sources |
+| Reliability | Single point of failure | Redundant |
 
 ---
 
 ## Technical Notes
 
-- Kraken can send 20+ trades per second for SOL/USD during high volume
-- Each trade has a unique `trade_id` and millisecond-precision timestamp
-- The sequence counter guarantees React re-renders on every WebSocket message
-- Memory usage will increase slightly with more data points (mitigated by 15-minute rolling window)
+1. **Price Consistency**: All major exchanges track within ~0.01% of each other for SOL/USD
+2. **No Proxy Needed**: Coinbase and Binance.US WebSockets work directly from browser
+3. **Memory**: Each source maintains its own connection; combined overhead is minimal
+4. **Fallback**: If one source disconnects, others continue providing data
 
