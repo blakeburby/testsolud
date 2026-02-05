@@ -71,3 +71,55 @@
    volume: number;
    volume_24h: number;
  }
+ 
+ // Full market response from direct Kalshi API
+ export interface KalshiFullMarketResponse {
+   ticker: string;
+   event_ticker: string;
+   title: string;
+   subtitle?: string;
+   status: string;
+   open_time: string;
+   close_time: string;
+   expiration_time: string;
+   yes_bid?: number;
+   yes_bid_dollars?: string;
+   yes_ask?: number;
+   yes_ask_dollars?: string;
+   no_bid?: number;
+   no_bid_dollars?: string;
+   no_ask?: number;
+   no_ask_dollars?: string;
+   last_price?: number;
+   last_price_dollars?: string;
+   volume: number;
+   volume_24h: number;
+   functional_strike?: string;
+   strike_type?: 'greater' | 'less';
+ }
+ 
+ // Full market response from direct Kalshi API
+ export interface KalshiFullMarketResponse {
+   ticker: string;
+   event_ticker: string;
+   title: string;
+   subtitle?: string;
+   status: string;
+   open_time: string;
+   close_time: string;
+   expiration_time: string;
+   yes_bid?: number;
+   yes_bid_dollars?: string;
+   yes_ask?: number;
+   yes_ask_dollars?: string;
+   no_bid?: number;
+   no_bid_dollars?: string;
+   no_ask?: number;
+   no_ask_dollars?: string;
+   last_price?: number;
+   last_price_dollars?: string;
+   volume: number;
+   volume_24h: number;
+   functional_strike?: string;
+   strike_type?: 'greater' | 'less';
+ }

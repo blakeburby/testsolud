@@ -1,7 +1,8 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
  import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline } from '@/types/sol-markets';
- import { fetchKalshiMarkets, fetchMarketPrice, fetchSOLPriceQuick, fetchSOLPriceWithHistory } from '@/lib/dome-client';
-import { filterSOL15MinMarkets, filterSOLMarkets, groupMarketsIntoTimeSlots } from '@/lib/sol-market-filter';
+ import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchSOLPriceQuick, fetchSOLPriceWithHistory } from '@/lib/kalshi-client';
+ import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
+ import type { KalshiFullMarketResponse } from '@/types/sol-markets';
  import { useToast } from '@/hooks/use-toast';
 
 // Synthetic 15-minute window generator for when real contracts aren't available
@@ -208,27 +209,22 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
      try {
        dispatch({ type: 'SET_LOADING', payload: true });
         
-        // Try fetching with search parameter for better results
-        let rawMarkets = await fetchKalshiMarkets('open', 100, 'SOL');
-        
-        // If no results, try without search
-        if (!rawMarkets || rawMarkets.length === 0) {
-          rawMarkets = await fetchKalshiMarkets('open', 100);
-        }
-        
-        // Try 15-minute markets first, then fall back to general SOL markets
-        let solMarkets = filterSOL15MinMarkets(rawMarkets);
-        if (solMarkets.length === 0) {
-          solMarkets = filterSOLMarkets(rawMarkets);
-        }
-        
-        let timeSlots = groupMarketsIntoTimeSlots(solMarkets);
-        
-        // If still no markets, use synthetic slots
-        if (timeSlots.length === 0 && state.currentPrice && state.currentPrice > 0) {
-          console.log('No real markets found, using synthetic 15-minute windows');
-          timeSlots = generateSyntheticSlots(state.currentPrice);
-        }
+       // Fetch real KXSOL15M 15-minute contracts from Kalshi
+       const rawMarkets = await fetchKalshi15MinMarkets();
+       console.log(`Fetched ${rawMarkets.length} KXSOL15M markets from Kalshi`);
+       
+       // Parse markets into SOLMarket format
+       const solMarkets: SOLMarket[] = rawMarkets
+         .map(m => parseKalshiFullMarket(m as unknown as KalshiFullMarketResponse))
+         .filter((m): m is SOLMarket => m !== null);
+       
+       let timeSlots = groupMarketsIntoTimeSlots(solMarkets);
+       
+       // If no real markets, use synthetic slots as fallback
+       if (timeSlots.length === 0 && state.currentPrice && state.currentPrice > 0) {
+         console.log('No real KXSOL15M markets found, using synthetic 15-minute windows');
+         timeSlots = generateSyntheticSlots(state.currentPrice);
+       }
  
        dispatch({ type: 'SET_MARKETS', payload: solMarkets });
        dispatch({ type: 'SET_TIME_SLOTS', payload: timeSlots });
@@ -275,18 +271,26 @@ function generateSyntheticSlots(currentPrice: number): TimeSlot[] {
       if (state.selectedMarket.ticker.startsWith('SYNTHETIC-')) return;
  
      try {
-       const priceData = await fetchMarketPrice(state.selectedMarket.ticker);
+       const priceData = await fetchKalshiMarket(state.selectedMarket.ticker);
+       
+       // Parse prices - prefer dollar format
+       const yesBid = priceData.yes_bid_dollars ? parseFloat(priceData.yes_bid_dollars) : (priceData.yes_bid ? priceData.yes_bid / 100 : null);
+       const yesAsk = priceData.yes_ask_dollars ? parseFloat(priceData.yes_ask_dollars) : (priceData.yes_ask ? priceData.yes_ask / 100 : null);
+       const noBid = priceData.no_bid_dollars ? parseFloat(priceData.no_bid_dollars) : (priceData.no_bid ? priceData.no_bid / 100 : null);
+       const noAsk = priceData.no_ask_dollars ? parseFloat(priceData.no_ask_dollars) : (priceData.no_ask ? priceData.no_ask / 100 : null);
+       const lastPrice = priceData.last_price_dollars ? parseFloat(priceData.last_price_dollars) : (priceData.last_price ? priceData.last_price / 100 : null);
+       
        dispatch({
          type: 'UPDATE_MARKET_PRICES',
          payload: {
            ticker: state.selectedMarket.ticker,
            prices: {
-             yesBid: priceData.yes_bid ? priceData.yes_bid / 100 : null,
-             yesAsk: priceData.yes_ask ? priceData.yes_ask / 100 : null,
-             noBid: priceData.no_bid ? priceData.no_bid / 100 : null,
-             noAsk: priceData.no_ask ? priceData.no_ask / 100 : null,
-             yesPrice: priceData.last_price ? priceData.last_price / 100 : null,
-             noPrice: priceData.last_price ? (100 - priceData.last_price) / 100 : null,
+             yesBid,
+             yesAsk,
+             noBid,
+             noAsk,
+             yesPrice: lastPrice,
+             noPrice: lastPrice !== null ? 1 - lastPrice : null,
            },
          },
        });
