@@ -270,23 +270,28 @@
      if (orderbookFp.yes_dollars && Array.isArray(orderbookFp.yes_dollars)) {
        for (const [priceStr, size] of orderbookFp.yes_dollars) {
          const price = parseFloat(priceStr);
-         // In Kalshi, orderbook entries are typically asks (offers to sell)
-         yesAsks.push({ price, size });
+          // In Kalshi, orderbook entries are typically asks (offers to sell)
+          // Size can be a number or string, ensure it's a number
+          const sizeNum = typeof size === 'string' ? parseFloat(size) : size;
+          yesAsks.push({ price, size: sizeNum });
        }
      } else if (orderbook.yes && Array.isArray(orderbook.yes)) {
        for (const [priceCents, size] of orderbook.yes) {
-         yesAsks.push({ price: priceCents / 100, size });
+          const sizeNum = typeof size === 'string' ? parseFloat(size) : size;
+          yesAsks.push({ price: priceCents / 100, size: sizeNum });
        }
      }
  
      if (orderbookFp.no_dollars && Array.isArray(orderbookFp.no_dollars)) {
        for (const [priceStr, size] of orderbookFp.no_dollars) {
          const price = parseFloat(priceStr);
-         noAsks.push({ price, size });
+          const sizeNum = typeof size === 'string' ? parseFloat(size) : size;
+          noAsks.push({ price, size: sizeNum });
        }
      } else if (orderbook.no && Array.isArray(orderbook.no)) {
        for (const [priceCents, size] of orderbook.no) {
-         noAsks.push({ price: priceCents / 100, size });
+          const sizeNum = typeof size === 'string' ? parseFloat(size) : size;
+          noAsks.push({ price: priceCents / 100, size: sizeNum });
        }
      }
  
