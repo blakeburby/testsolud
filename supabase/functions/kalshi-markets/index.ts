@@ -119,11 +119,11 @@ serve(async (req) => {
 
     const privateKey = await importPrivateKey(privateKeyPem);
 
-    let kalshiPath: string;
+    let kalshiSignPath: string;
     let kalshiUrl: string;
     
     if (mode === "get" && ticker) {
-      kalshiPath = `/trade-api/v2/markets/${ticker}`;
+      kalshiSignPath = `/trade-api/v2/markets/${ticker}`;
       kalshiUrl = `${KALSHI_API_BASE}/markets/${ticker}`;
     } else {
       const params = new URLSearchParams({
@@ -131,14 +131,14 @@ serve(async (req) => {
         status: "open",
         limit: "100",
       });
-      kalshiPath = `/trade-api/v2/markets?${params}`;
+      kalshiSignPath = `/trade-api/v2/markets`;
       kalshiUrl = `${KALSHI_API_BASE}/markets?${params}`;
     }
 
     const timestamp = Date.now().toString();
-    const signature = await signRequest(privateKey, timestamp, "GET", kalshiPath);
+    const signature = await signRequest(privateKey, timestamp, "GET", kalshiSignPath);
 
-    console.log(`[${VERSION}] Fetching from Kalshi: ${kalshiPath}`);
+    console.log(`[${VERSION}] Fetching from Kalshi: ${kalshiSignPath}`);
 
     const response = await fetchWithRetry(kalshiUrl, {
       method: "GET",
