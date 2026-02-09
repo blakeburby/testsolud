@@ -2,7 +2,8 @@ import { useSignalEngine } from '@/hooks/useSignalEngine';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { TrendingUp, TrendingDown, AlertTriangle, Zap, Clock, ShieldAlert, Lock, Radio } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, Zap, Clock, ShieldAlert, Lock, Radio, Ban } from 'lucide-react';
+import { useState, useEffect } from 'react';
 
 function RegimeBadge({ regime }: { regime: string }) {
   const config = {
@@ -32,8 +33,27 @@ function DecisionBadge({ decision }: { decision: string }) {
   return null;
 }
 
+function ScanTimer({ startTime }: { startTime: number | null }) {
+  const [elapsed, setElapsed] = useState('0:00');
+
+  useEffect(() => {
+    if (!startTime) return;
+    const update = () => {
+      const sec = Math.floor((Date.now() - startTime) / 1000);
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      setElapsed(`${m}:${s.toString().padStart(2, '0')}`);
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [startTime]);
+
+  return <span className="text-[10px] font-mono text-muted-foreground">Scanning {elapsed}</span>;
+}
+
 export function TradePlan() {
-  const { tradePlan, status, lockedAt, bestEvSoFar, isComputing } = useSignalEngine();
+  const { tradePlan, status, lockedAt, bestEvSoFar, isComputing, stabilityCount, dataCollectionStart } = useSignalEngine();
 
   // No data yet
   if (!tradePlan) {
@@ -48,7 +68,7 @@ export function TradePlan() {
     );
   }
 
-  // SCANNING state — show best candidate so far
+  // SCANNING state
   if (status === 'SCANNING') {
     return (
       <Card className="border-border/50">
@@ -58,20 +78,30 @@ export function TradePlan() {
             <span className="text-xs font-mono text-muted-foreground">
               Scanning market…
             </span>
-            {bestEvSoFar !== 0 && (
-              <span className={`text-xs font-mono ml-auto ${bestEvSoFar > 0 ? 'text-[hsl(var(--trading-up))]' : 'text-muted-foreground'}`}>
-                Best EV: {bestEvSoFar > 0 ? '+' : ''}{(bestEvSoFar * 100).toFixed(1)}¢
-              </span>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              {bestEvSoFar !== 0 && (
+                <span className={`text-xs font-mono ${bestEvSoFar > 0 ? 'text-[hsl(var(--trading-up))]' : 'text-muted-foreground'}`}>
+                  Best EV: {bestEvSoFar > 0 ? '+' : ''}{(bestEvSoFar * 100).toFixed(1)}¢
+                </span>
+              )}
+              <ScanTimer startTime={dataCollectionStart} />
+            </div>
           </div>
-          {tradePlan.decision !== 'NO_TRADE' && tradePlan.decision !== 'WAIT' && (
+
+          {tradePlan.decision === 'TRADE_NOW' && (
             <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
               <span>Candidate: {tradePlan.direction.replace('_', ' ')}</span>
               <span>Edge: {(tradePlan.edge * 100).toFixed(1)}%</span>
               <RegimeBadge regime={tradePlan.regime} />
+              {stabilityCount > 0 && (
+                <span className="ml-auto text-[hsl(var(--chart-1))]">
+                  Confirming {stabilityCount}/3
+                </span>
+              )}
             </div>
           )}
-          {(tradePlan.decision === 'NO_TRADE' || tradePlan.decision === 'WAIT') && (
+
+          {tradePlan.decision !== 'TRADE_NOW' && (
             <p className="text-[10px] font-mono text-muted-foreground">
               {tradePlan.noTradeReason ?? 'No actionable signal yet'}
             </p>
@@ -81,7 +111,33 @@ export function TradePlan() {
     );
   }
 
-  // COMMITTED state — show full trade plan with lock
+  // COMMITTED state — NO_TRADE (no edge found this window)
+  if (tradePlan.decision === 'NO_TRADE') {
+    return (
+      <Card className="border-muted-foreground/30 border">
+        <CardContent className="py-3 px-4 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className="gap-1 text-[10px] border-muted-foreground/50 text-muted-foreground">
+              <Lock className="h-2.5 w-2.5" /> COMMITTED
+            </Badge>
+            <Badge className="bg-muted text-muted-foreground gap-1">
+              <Ban className="h-3 w-3" /> NO TRADE
+            </Badge>
+            {lockedAt && (
+              <span className="text-[10px] text-muted-foreground ml-auto font-mono">
+                Locked {lockedAt.toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+          <p className="text-xs font-mono text-muted-foreground">
+            {tradePlan.noTradeReason ?? 'No positive EV detected this window'}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // COMMITTED state — TRADE_NOW (show full trade plan with lock)
   const isYes = tradePlan.direction === 'LONG_YES';
   const DirectionIcon = isYes ? TrendingUp : TrendingDown;
 
