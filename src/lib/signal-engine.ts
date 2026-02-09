@@ -444,3 +444,110 @@ export function generateTradePlan(inputs: SignalEngineInputs): TradePlan {
     computeTimeMs,
   };
 }
+
+// ── Forced Trade Plan (bypasses hard filters) ──────────────────────────
+
+export function generateForcedTradePlan(inputs: SignalEngineInputs): TradePlan {
+  const startTime = performance.now();
+
+  const {
+    currentPrice, strikePrice, timeToExpiryMs, totalWindowMs,
+    priceHistory, marketYesBid, marketYesAsk, marketLastPrice,
+    orderbookYesBids, orderbookYesAsks, direction,
+  } = inputs;
+
+  const regimeResult = detectRegime(priceHistory);
+
+  const yesMid = (marketYesBid !== null && marketYesAsk !== null)
+    ? (marketYesBid + marketYesAsk) / 2
+    : marketLastPrice ?? 0.5;
+  const pMarket = Math.max(0.01, Math.min(0.99, yesMid));
+
+  const timeToExpirySec = Math.max(timeToExpiryMs / 1000, 0);
+  const baseVol = regimeResult.annualizedVol;
+  const regimeVols = {
+    r1: Math.max(baseVol * 0.6, 0.15),
+    r2: Math.max(baseVol * 1.3, 0.5),
+    r3: Math.max(baseVol * 2.0, 0.8),
+  };
+
+  const pSimAbove = runMonteCarloSim(
+    currentPrice, strikePrice, timeToExpirySec,
+    regimeVols, regimeResult.weights, totalWindowMs,
+  );
+  const pSim = direction === 'up' ? pSimAbove : 1 - pSimAbove;
+
+  const obResult = computeOrderbookImbalance(orderbookYesBids, orderbookYesAsks);
+  const pOB = obResult.probabilityAdjustment;
+  const disagreement = Math.abs(pMarket - pSim);
+  const blendWeights = computeBlendWeights(obResult.totalDepth, obResult.spread, disagreement);
+  const pFinal = blendProbabilities(pMarket, pSim, pOB, blendWeights);
+
+  const edge = pFinal - pMarket;
+  const tradeDirection = edge > 0 ? 'LONG_YES' as const : 'LONG_NO' as const;
+  const effectiveP = tradeDirection === 'LONG_YES' ? pFinal : 1 - pFinal;
+  const contractPrice = tradeDirection === 'LONG_YES'
+    ? (marketYesAsk ?? pMarket)
+    : (1 - (marketYesBid ?? pMarket));
+
+  const clampedContract = Math.max(0.01, Math.min(0.99, contractPrice));
+  const evResult = computeEV(effectiveP, clampedContract);
+
+  const odds = (1 - clampedContract) / Math.max(clampedContract, 0.01);
+  const estimationError = Math.min(disagreement + 0.1, 0.5);
+  const kelly = computeKellySize(effectiveP, odds, estimationError);
+  // Ensure minimum position size for forced trades
+  const positionSize = Math.max(kelly.positionSizePct, 1);
+
+  const entryPrice = clampedContract;
+  const stopLoss = Math.max(0.01, clampedContract + 0.10);
+  const takeProfit = Math.max(0.01, clampedContract - (clampedContract * 0.3));
+
+  const minutesLeft = Math.max(0, timeToExpiryMs / 60000);
+  const timeHorizon = minutesLeft < 2
+    ? 'Hold to settlement'
+    : `Hold ${Math.round(minutesLeft)}min to settlement or exit at TP`;
+
+  const confidenceScore = Math.round(Math.max(0, Math.min(100,
+    (1 - disagreement) * 40 +
+    (evResult.ev > 0 ? 20 : 0) +
+    Math.min(obResult.totalDepth / 10, 20) +
+    (1 - obResult.spread * 5) * 20
+  )));
+
+  const invalidationConditions: string[] = [];
+  if (direction === 'up') {
+    invalidationConditions.push(`SOL drops below $${(strikePrice - 0.5).toFixed(2)}`);
+  } else {
+    invalidationConditions.push(`SOL rises above $${(strikePrice + 0.5).toFixed(2)}`);
+  }
+
+  let liquidityNotes = obResult.totalDepth > 200
+    ? `Deep book (${Math.round(obResult.totalDepth)} contracts)`
+    : obResult.totalDepth > 50
+      ? `Moderate depth (${Math.round(obResult.totalDepth)} contracts)`
+      : `⚠ Thin book (${Math.round(obResult.totalDepth)} contracts) — use limit orders only`;
+
+  return {
+    decision: 'TRADE_NOW',
+    direction: tradeDirection,
+    finalProbability: pFinal,
+    marketProbability: pMarket,
+    edge: Math.abs(edge),
+    expectedValue: evResult.ev,
+    positionSize,
+    entryPrice,
+    stopLoss,
+    takeProfit,
+    timeHorizon,
+    invalidationConditions,
+    liquidityNotes,
+    confidenceScore,
+    noTradeReason: undefined,
+    regime: regimeResult.regime,
+    disagreement,
+    regimeWeights: regimeResult.weights,
+    blendWeights,
+    computeTimeMs: performance.now() - startTime,
+  };
+}

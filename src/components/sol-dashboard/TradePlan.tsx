@@ -2,7 +2,7 @@ import { useSignalEngine } from '@/hooks/useSignalEngine';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { TrendingUp, TrendingDown, AlertTriangle, Zap, Clock, ShieldAlert } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, Zap, Clock, ShieldAlert, Lock, Radio } from 'lucide-react';
 
 function RegimeBadge({ regime }: { regime: string }) {
   const config = {
@@ -33,8 +33,9 @@ function DecisionBadge({ decision }: { decision: string }) {
 }
 
 export function TradePlan() {
-  const { tradePlan, isComputing } = useSignalEngine();
+  const { tradePlan, status, lockedAt, bestEvSoFar, isComputing } = useSignalEngine();
 
+  // No data yet
   if (!tradePlan) {
     return (
       <Card className="border-border/50">
@@ -47,42 +48,62 @@ export function TradePlan() {
     );
   }
 
-  // NO TRADE output
-  if (tradePlan.decision === 'NO_TRADE') {
+  // SCANNING state — show best candidate so far
+  if (status === 'SCANNING') {
     return (
       <Card className="border-border/50">
-        <CardContent className="py-3 px-4 flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="text-xs font-mono text-muted-foreground">
-            NO TRADE — {tradePlan.noTradeReason ?? 'Market efficient'}
-          </span>
-          <RegimeBadge regime={tradePlan.regime} />
-          <span className="text-[10px] text-muted-foreground ml-auto font-mono">
-            {tradePlan.computeTimeMs.toFixed(0)}ms
-          </span>
+        <CardContent className="py-3 px-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Radio className="h-3.5 w-3.5 text-[hsl(var(--chart-1))] animate-pulse" />
+            <span className="text-xs font-mono text-muted-foreground">
+              Scanning market…
+            </span>
+            {bestEvSoFar !== 0 && (
+              <span className={`text-xs font-mono ml-auto ${bestEvSoFar > 0 ? 'text-[hsl(var(--trading-up))]' : 'text-muted-foreground'}`}>
+                Best EV: {bestEvSoFar > 0 ? '+' : ''}{(bestEvSoFar * 100).toFixed(1)}¢
+              </span>
+            )}
+          </div>
+          {tradePlan.decision !== 'NO_TRADE' && tradePlan.decision !== 'WAIT' && (
+            <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+              <span>Candidate: {tradePlan.direction.replace('_', ' ')}</span>
+              <span>Edge: {(tradePlan.edge * 100).toFixed(1)}%</span>
+              <RegimeBadge regime={tradePlan.regime} />
+            </div>
+          )}
+          {(tradePlan.decision === 'NO_TRADE' || tradePlan.decision === 'WAIT') && (
+            <p className="text-[10px] font-mono text-muted-foreground">
+              {tradePlan.noTradeReason ?? 'No actionable signal yet'}
+            </p>
+          )}
         </CardContent>
       </Card>
     );
   }
 
-  // TRADE / WAIT output
+  // COMMITTED state — show full trade plan with lock
   const isYes = tradePlan.direction === 'LONG_YES';
   const DirectionIcon = isYes ? TrendingUp : TrendingDown;
 
   return (
-    <Card className="border-border/50">
+    <Card className="border-[hsl(var(--trading-up))]/30 border">
       <CardContent className="py-3 px-4 space-y-3">
-        {/* Row 1: Decision + Direction + Regime */}
+        {/* Row 1: Committed badge + Decision + Direction + Regime */}
         <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className="gap-1 text-[10px] border-[hsl(var(--trading-up))]/50 text-[hsl(var(--trading-up))]">
+            <Lock className="h-2.5 w-2.5" /> COMMITTED
+          </Badge>
           <DecisionBadge decision={tradePlan.decision} />
           <span className={`text-sm font-bold flex items-center gap-1 ${isYes ? 'text-[hsl(var(--trading-up))]' : 'text-[hsl(var(--trading-down))]'}`}>
             <DirectionIcon className="h-3.5 w-3.5" />
             {tradePlan.direction.replace('_', ' ')}
           </span>
           <RegimeBadge regime={tradePlan.regime} />
-          <span className="text-[10px] text-muted-foreground ml-auto font-mono">
-            {tradePlan.computeTimeMs.toFixed(0)}ms
-          </span>
+          {lockedAt && (
+            <span className="text-[10px] text-muted-foreground ml-auto font-mono">
+              Locked {lockedAt.toLocaleTimeString()}
+            </span>
+          )}
         </div>
 
         {/* Row 2: Probability comparison bar */}
