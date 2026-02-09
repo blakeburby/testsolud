@@ -1,148 +1,55 @@
 
 
-# High-Frequency SOL/USD Price Updates - Multiple Times Per Second
+# Fix Kalshi Markets API - Add Authentication
 
-## Problem Identified
+## Problem
 
-The console logs reveal the real issue:
+The Kalshi Markets API is returning **401 "token authentication failure"** on every request. The `kalshi-markets` edge function currently makes **unauthenticated** requests to Kalshi, but Kalshi now requires authentication even for public endpoints like `/markets`.
 
-```
-[Kraken WS] Trade: $91.2000 | 11:35:58 PM
-[Kraken WS] Trade: $91.1700 | 11:36:07 PM  ← 9 seconds gap
-[Kraken WS] Trade: $91.1700 | 11:36:12 PM  ← 5 seconds gap
-```
+The `kalshi-orderbook` function already uses authentication (API key + RSA-PSS signature) and works correctly. The `kalshi-markets` function needs the same authentication logic.
 
-**Kraken's SOL/USD pair has low trading volume** - trades only occur every 5-10 seconds. This is not a code issue; it's an exchange liquidity issue.
+## Root Cause
 
----
+| Function | Authentication | Status |
+|----------|---------------|--------|
+| `kalshi-orderbook` | API key + RSA signature | Working |
+| `kalshi-markets` | None (anonymous) | **401 errors** |
 
-## Solution: Multi-Source WebSocket Strategy
+Your `KALSHI_API_KEY` and `KALSHI_PRIVATE_KEY` secrets are already configured -- they just aren't being used by the markets function.
 
-Combine multiple data sources to achieve sub-second updates:
+## Fix
 
-### Architecture
+**File:** `supabase/functions/kalshi-markets/index.ts`
 
-```
-+------------------+     +------------------+     +------------------+
-|   Kraken WS      |     |   Coinbase WS    |     |  Binance.US WS   |
-|   (trade)        |     |   (ticker)       |     |  (aggTrade)      |
-+--------+---------+     +--------+---------+     +--------+---------+
-         |                        |                        |
-         v                        v                        v
-    +----+------------------------+------------------------+----+
-    |                    Price Aggregator                       |
-    |  - Dedup by timestamp                                     |
-    |  - Take most recent price                                 |
-    |  - Emit on ANY source update                              |
-    +---------------------------+-------------------------------+
-                                |
-                                v
-                    +----------+----------+
-                    |   Chart Component   |
-                    |   (updates ~10x/sec)|
-                    +---------------------+
-```
+Copy the authentication logic from `kalshi-orderbook` into `kalshi-markets`:
 
----
+1. Add the `importPrivateKey()` function (RSA key import from PEM)
+2. Add the `signRequest()` function (RSA-PSS signature generation)
+3. Load `KALSHI_API_KEY` and `KALSHI_PRIVATE_KEY` from environment
+4. Generate authentication headers (`KALSHI-ACCESS-KEY`, `KALSHI-ACCESS-TIMESTAMP`, `KALSHI-ACCESS-SIGNATURE`) for each request
+5. Include these headers in the `fetchWithRetry` call
 
-## Implementation Plan
+## Technical Details
 
-### Step 1: Create Multi-Source WebSocket Hook
+The authentication flow (already working in `kalshi-orderbook`):
 
-**File:** `src/hooks/useMultiSourcePrice.ts` (new)
+1. Load RSA private key from `KALSHI_PRIVATE_KEY` secret (PKCS#8 PEM format)
+2. For each request, generate a signature over `{timestamp}{method}{path}` using RSA-PSS with SHA-256
+3. Send three headers with every request:
+   - `KALSHI-ACCESS-KEY`: The API key
+   - `KALSHI-ACCESS-TIMESTAMP`: Current timestamp in milliseconds
+   - `KALSHI-ACCESS-SIGNATURE`: Base64-encoded RSA-PSS signature
 
-Connect to multiple exchanges simultaneously:
+The path used for signing must match the API path exactly (e.g., `/trade-api/v2/markets?series_ticker=KXSOL15M&status=open&limit=100`).
 
-| Source | Channel | Update Frequency | Notes |
-|--------|---------|------------------|-------|
-| Kraken | `trade` | ~0.1-0.2/sec | Most accurate (actual trades) |
-| Coinbase | `ticker` | ~1-5/sec | Best bid/ask updates |
-| Binance.US | `aggTrade` | ~5-20/sec | Highest frequency, no geo-block |
+## Files to Modify
 
-**Key Features:**
-- Connect to all 3 sources simultaneously
-- Track last update time from each source
-- Emit the most recent price on ANY source update
-- Sequence counter increments on every message from any source
-
-### Step 2: Coinbase WebSocket Integration
-
-**Endpoint:** `wss://ws-feed.exchange.coinbase.com`
-
-**Subscription:**
-```json
-{
-  "type": "subscribe",
-  "product_ids": ["SOL-USD"],
-  "channels": ["ticker"]
-}
-```
-
-**Ticker Message (updates on every order book change):**
-```json
-{
-  "type": "ticker",
-  "product_id": "SOL-USD",
-  "price": "91.06",
-  "time": "2025-02-05T23:37:00.000Z"
-}
-```
-
-### Step 3: Binance.US WebSocket Integration
-
-**Endpoint:** `wss://stream.binance.us:9443/ws/solusd@aggTrade`
-
-**Message Format:**
-```json
-{
-  "e": "aggTrade",
-  "s": "SOLUSD",
-  "p": "91.06",
-  "T": 1738795020000
-}
-```
-
-### Step 4: Update Context to Use Multi-Source Hook
-
-**File:** `src/contexts/SOLMarketsContext.tsx`
-
-Replace:
-```typescript
-const { ... } = useKrakenWebSocket('SOL/USD');
-```
-
-With:
-```typescript
-const { price, timestamp, isConnected, sequence } = useMultiSourcePrice('SOL/USD');
-```
-
----
-
-## Files to Create/Modify
-
-| File | Action | Description |
-|------|--------|-------------|
-| `src/hooks/useMultiSourcePrice.ts` | **Create** | New hook connecting to Kraken + Coinbase + Binance.US |
-| `src/hooks/useKrakenWebSocket.ts` | **Keep** | Used internally by multi-source hook |
-| `src/contexts/SOLMarketsContext.tsx` | **Modify** | Switch to useMultiSourcePrice |
-
----
+| File | Change |
+|------|--------|
+| `supabase/functions/kalshi-markets/index.ts` | Add RSA authentication (import from orderbook pattern) |
 
 ## Expected Outcome
 
-| Metric | Current (Kraken only) | After (Multi-source) |
-|--------|----------------------|----------------------|
-| Updates/Second | 0.1-0.2 | 5-20+ |
-| Source | Single exchange | 3 exchanges |
-| Latency | Depends on Kraken trades | Best of 3 sources |
-| Reliability | Single point of failure | Redundant |
-
----
-
-## Technical Notes
-
-1. **Price Consistency**: All major exchanges track within ~0.01% of each other for SOL/USD
-2. **No Proxy Needed**: Coinbase and Binance.US WebSockets work directly from browser
-3. **Memory**: Each source maintains its own connection; combined overhead is minimal
-4. **Fallback**: If one source disconnects, others continue providing data
-
+- All Kalshi API calls will be authenticated
+- 401 errors will stop
+- Market data and orderbook data will both load correctly
