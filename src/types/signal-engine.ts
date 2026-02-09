@@ -66,6 +66,16 @@ export interface TradePlan {
   computeTimeMs: number;
 }
 
+export type AccumulatorStatus = 'SCANNING' | 'COMMITTED';
+
+export interface LockedTradePlan {
+  plan: TradePlan;
+  status: AccumulatorStatus;
+  lockedAt: Date | null;
+  windowId: string;
+  bestEvSoFar: number;
+}
+
 export interface SignalEngineInputs {
   currentPrice: number;
   strikePrice: number;
