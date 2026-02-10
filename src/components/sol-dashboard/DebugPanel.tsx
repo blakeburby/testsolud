@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Bug } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useSignalEngine } from '@/hooks/useSignalEngine';
+import { useSOLMarkets } from '@/contexts/SOLMarketsContext';
+import { runMonteCarloDistribution, detectRegime, getRegimeVols } from '@/lib/signal-engine';
 import type { DebugSnapshot, MCDistributionResult } from '@/types/signal-engine';
 import { AreaChart, Area, XAxis, ReferenceLine, ResponsiveContainer, Tooltip } from 'recharts';
 
@@ -169,14 +171,16 @@ function MCDistributionChart({ dist }: { dist: MCDistributionResult }) {
   );
 }
 
-function MCSection({ plan }: { plan: NonNullable<ReturnType<typeof useSignalEngine>['tradePlan']> }) {
+function MCSection({ plan, liveDist }: { plan: NonNullable<ReturnType<typeof useSignalEngine>['tradePlan']>; liveDist: MCDistributionResult | null }) {
   const debug = plan.debugData;
   if (!debug) return null;
-  const dist = debug.mcDistribution;
+  const dist = liveDist ?? debug.mcDistribution;
 
   return (
     <div className="space-y-2.5">
-      <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Monte Carlo</h4>
+      <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+        Monte Carlo {liveDist ? '(live)' : ''}
+      </h4>
       <div className="grid grid-cols-3 gap-x-4 text-[10px] font-mono text-muted-foreground">
         <span>P(sim): {(debug.pSim * 100).toFixed(2)}%</span>
         <span>Time: {plan.computeTimeMs.toFixed(0)}ms</span>
@@ -241,6 +245,33 @@ function HistorySection({ history }: { history: DebugSnapshot[] }) {
 export function DebugPanel() {
   const [open, setOpen] = useState(false);
   const { tradePlan, debugHistory } = useSignalEngine();
+  const { currentPrice, priceHistory, selectedMarket, selectedSlot } = useSOLMarkets();
+  const [liveMcDist, setLiveMcDist] = useState<MCDistributionResult | null>(null);
+
+  // Run MC distribution every 1s when panel is open
+  useEffect(() => {
+    if (!open || !currentPrice || !selectedMarket || !selectedSlot) {
+      return;
+    }
+
+    const compute = () => {
+      const strike = selectedMarket.strikePrice;
+      const totalWindowMs = selectedSlot.windowEnd.getTime() - selectedSlot.windowStart.getTime();
+      const timeToExpirySec = Math.max((selectedSlot.windowEnd.getTime() - Date.now()) / 1000, 0);
+      const regime = detectRegime(priceHistory);
+      const regimeVols = getRegimeVols(regime.annualizedVol);
+
+      const dist = runMonteCarloDistribution(
+        currentPrice, strike, timeToExpirySec,
+        regimeVols, regime.weights, totalWindowMs,
+      );
+      setLiveMcDist(dist);
+    };
+
+    compute(); // run immediately
+    const id = window.setInterval(compute, 1000);
+    return () => clearInterval(id);
+  }, [open, currentPrice, priceHistory, selectedMarket, selectedSlot]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -255,7 +286,7 @@ export function DebugPanel() {
             <>
               <RegimeSection plan={tradePlan} />
               <BlendSection plan={tradePlan} />
-              <MCSection plan={tradePlan} />
+              <MCSection plan={tradePlan} liveDist={liveMcDist} />
               <HistorySection history={debugHistory} />
             </>
           ) : (
