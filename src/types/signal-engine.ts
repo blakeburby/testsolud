@@ -64,6 +64,7 @@ export interface TradePlan {
   regimeWeights: RegimeWeights;
   blendWeights: BlendWeights;
   computeTimeMs: number;
+  debugData?: DebugData;
 }
 
 export type AccumulatorStatus = 'SCANNING' | 'COMMITTED';
@@ -74,6 +75,27 @@ export interface LockedTradePlan {
   lockedAt: Date | null;
   windowId: string;
   bestEvSoFar: number;
+}
+
+export interface DebugData {
+  regimeDetection: RegimeDetection;
+  orderbookImbalance: OrderbookImbalance;
+  pSim: number;
+  pMarket: number;
+  pOB: number;
+}
+
+export interface DebugSnapshot {
+  timestamp: number;
+  decision: Decision;
+  direction: Direction;
+  ev: number;
+  edge: number;
+  regime: Regime;
+  stabilityCount: number;
+  pSim: number;
+  pMarket: number;
+  pFinal: number;
 }
 
 export interface SignalEngineInputs {
