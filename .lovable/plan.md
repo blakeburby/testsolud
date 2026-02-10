@@ -1,105 +1,68 @@
 
 
-# Smarter One-Trade-Per-Window Logic
+# Collapsible Debug Panel Below Trade Plan
 
-## Current Problem
+## Overview
 
-The engine has two extremes:
-- **Too picky early**: Only commits if EV > 8 cents (rarely happens), so it stays in SCANNING for most of the window.
-- **Too aggressive late**: At the 3-minute mark, it forces a trade even with negative EV by bypassing all safety gates.
+Add a collapsible "Debug" panel directly below the TradePlan card. It starts collapsed (just a small "Debug" toggle) and expands to show four sections of internal engine data: regime analysis, blend weights, Monte Carlo stats, and accumulator state history.
 
-You want something in between: take exactly one trade per window, but **only if there's any positive expected value**.
+## What You'll See
 
-## New Logic
+Collapsed: A subtle `[Bug icon] Debug` button at the bottom of the trade plan area.
 
-### Simplified Commitment Rules
+Expanded (four sections):
 
-1. **Scan the full window** -- continuously track the single best trade plan (highest EV that's positive).
+**Regime Analysis**
+- Current regime label + soft-weights bar (R1/R2/R3 as stacked horizontal bar)
+- Annualized vol and recent vol ratio values
 
-2. **Commit when ready** -- commit to a trade when ALL of these are true:
-   - Best candidate has positive EV (any amount above zero, after transaction costs)
-   - At least 2 minutes of data have been collected (avoid committing on noisy early ticks)
-   - The candidate has been the "best" for at least 3 consecutive evaluations (stability filter -- avoids locking in on a single noisy spike)
+**Probability Blend**
+- Three-column bar showing wMarket / wSim / wOrderbook percentages
+- Individual probabilities: P_market, P_sim, P_orderbook, P_final
+- Orderbook stats: imbalance, alpha, total depth, spread
 
-3. **Final check at 3 minutes remaining** -- if still scanning, commit to the best candidate IF it has positive EV. If no positive-EV candidate was ever found, output "NO TRADE -- no edge detected this window."
+**Monte Carlo**
+- P(above strike) raw value
+- Compute time in ms
+- Num paths (100k)
 
-4. **Never force a negative-EV trade** -- remove `generateForcedTradePlan` entirely. The forced commit path simply locks in whatever `bestPlanSoFar` is, or outputs NO TRADE if none qualifies.
-
-### Stability Filter (New)
-
-The current system can lock in a plan that spiked to positive EV on a single noisy tick. Add a "confirmation counter":
-- Each time the best candidate's direction and decision stay the same across consecutive ticks, increment a counter.
-- Require the counter to reach 3 (i.e., ~1.5 seconds of agreement at 500ms debounce) before allowing commitment.
-- This prevents locking in on transient microstructure noise.
-
-### EV Threshold Change
-
-Replace the current two-tier system (0.08 early / 0 forced) with a single rule:
-- **Minimum EV to commit: 0** (any positive EV after transaction costs + error margin, which is already handled by the `passesGate` check in `computeEV`).
-- Remove `EARLY_COMMIT_EV` constant entirely.
+**Accumulator History**
+- Rolling log of the last ~20 evaluations: timestamp, decision, direction, EV, stability count
+- Shows how the engine's opinion evolved over the window
 
 ## Changes
 
-### `src/hooks/useSignalEngine.ts`
+### 1. `src/types/signal-engine.ts`
+- Add `DebugSnapshot` interface: `{ timestamp: number, decision, direction, ev, edge, regime, stabilityCount, pSim, pMarket, pFinal }`
+- Add optional `debugData` field to `TradePlan`: `{ regimeDetection: RegimeDetection, orderbookImbalance: OrderbookImbalance, pSim: number, pMarket: number, pOB: number }`
 
-- Remove `EARLY_COMMIT_EV` constant
-- Add `stabilityCountRef` (tracks consecutive ticks where best plan direction + decision are unchanged)
-- Add `dataCollectionStartRef` (tracks when first price data arrived in this window)
-- New commitment logic:
-  - If best plan has `decision === 'TRADE_NOW'` AND stability count >= 3 AND at least 2 minutes of data collected: **commit**
-  - If `timeToExpiryMs < FORCED_COMMIT_MS` AND best plan has `decision === 'TRADE_NOW'`: **commit best plan**
-  - If `timeToExpiryMs < FORCED_COMMIT_MS` AND no qualifying plan exists: **commit a NO_TRADE plan** with reason "No positive EV detected this window"
-- Remove the call to `generateForcedTradePlan` -- the forced path just locks whatever is best, or NO_TRADE
+### 2. `src/lib/signal-engine.ts`
+- Attach intermediate values (`regimeResult`, `obResult`, `pSim`, `pMarket`, `pOB`) to the returned `TradePlan` via a new `debugData` field so the UI can display them without recomputing.
 
-### `src/lib/signal-engine.ts`
+### 3. `src/hooks/useSignalEngine.ts`
+- Add a `historyRef` (array of `DebugSnapshot`, capped at 20 entries) that appends a snapshot on each `compute()` call.
+- Expose `debugHistory` and `debugData` (from the current plan) in the return value.
+- Reset `historyRef` on window change.
 
-- Remove `generateForcedTradePlan()` function entirely (it's the source of bad forced trades)
-- No other changes to the signal engine -- the math stays the same
+### 4. `src/components/sol-dashboard/DebugPanel.tsx` (new file)
+- Collapsible panel using `Collapsible` from shadcn (already installed).
+- Four sub-sections, each a compact grid of monospace values:
+  - **Regime**: stacked bar + numbers
+  - **Blend**: three-segment bar + P values
+  - **MC Stats**: raw sim probability, compute time, path count
+  - **History**: scrollable mini-table of recent snapshots
+- All text is `text-[10px] font-mono text-muted-foreground` to match the existing trading UI style.
+- Collapsed by default; state persisted in local component state only.
 
-### `src/types/signal-engine.ts`
-
-- No changes needed (LockedTradePlan already has the right shape)
-
-### `src/components/sol-dashboard/TradePlan.tsx`
-
-- Update SCANNING state to show stability progress (e.g., "Signal confirming... 2/3")
-- Handle the case where committed plan has `decision === 'NO_TRADE'` -- show "NO TRADE -- no edge this window" with a muted locked badge instead of the green one
-- Add a "time scanning" indicator showing how long the engine has been evaluating
-
-## Revised Flow
-
-```text
-Window opens
-  |
-  v
-[SCANNING] "Collecting data..."  (first 2 minutes: observe only)
-  |
-  v
-[SCANNING] "Evaluating... Best EV: +1.2c  Confirming 1/3"
-  |
-  v  (stability confirmed: same direction for 3 ticks + positive EV)
-[COMMITTED] "TRADE NOW - LONG YES"  (locked)
-  |
-  v  (window expires, next contract)
-[SCANNING] (reset)
-
-
---- OR if no edge found ---
-
-[SCANNING] "No actionable signal yet"  (for 12 minutes)
-  |
-  v  (3 min remaining, no positive EV ever found)
-[COMMITTED] "NO TRADE - No edge this window"  (locked, muted style)
-  |
-  v  (window expires)
-[SCANNING] (reset)
-```
+### 5. `src/components/sol-dashboard/SOLDashboard.tsx`
+- Import and render `DebugPanel` right after `TradePlan`.
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/hooks/useSignalEngine.ts` | Replace commitment logic with stability-filtered positive-EV gating |
-| `src/lib/signal-engine.ts` | Remove `generateForcedTradePlan()` |
-| `src/components/sol-dashboard/TradePlan.tsx` | Add stability progress, handle committed NO_TRADE state |
-
+| `src/types/signal-engine.ts` | Add `DebugSnapshot` and `debugData` field to `TradePlan` |
+| `src/lib/signal-engine.ts` | Attach intermediate computation data to returned plan |
+| `src/hooks/useSignalEngine.ts` | Track history array, expose `debugHistory` |
+| `src/components/sol-dashboard/DebugPanel.tsx` | New collapsible debug UI component |
+| `src/components/sol-dashboard/SOLDashboard.tsx` | Add `DebugPanel` below `TradePlan` |
