@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSOLMarkets } from '@/contexts/SOLMarketsContext';
 import { generateTradePlan } from '@/lib/signal-engine';
-import type { TradePlan, SignalEngineInputs, LockedTradePlan, AccumulatorStatus } from '@/types/signal-engine';
+import type { TradePlan, SignalEngineInputs, LockedTradePlan, AccumulatorStatus, DebugSnapshot } from '@/types/signal-engine';
 
 const DEBOUNCE_MS = 500;
 const FORCED_COMMIT_MS = 3 * 60 * 1000; // 3 minutes before expiry
@@ -34,6 +34,8 @@ export function useSignalEngine() {
   const lastDirectionRef = useRef<string>('');
   const lastDecisionRef = useRef<string>('');
   const dataCollectionStartRef = useRef<number | null>(null);
+  const historyRef = useRef<DebugSnapshot[]>([]);
+  const [debugHistory, setDebugHistory] = useState<DebugSnapshot[]>([]);
 
   // Reset when window changes
   const currentWindowId = getWindowId(selectedSlot);
@@ -45,8 +47,10 @@ export function useSignalEngine() {
     lastDirectionRef.current = '';
     lastDecisionRef.current = '';
     dataCollectionStartRef.current = null;
+    historyRef.current = [];
     setLocked(null);
     setStabilityCount(0);
+    setDebugHistory([]);
   }
 
   const buildInputs = useCallback((): SignalEngineInputs | null => {
@@ -162,6 +166,22 @@ export function useSignalEngine() {
       // Normal computation
       const plan = generateTradePlan(inputs);
 
+      // Record debug snapshot
+      const snapshot: DebugSnapshot = {
+        timestamp: Date.now(),
+        decision: plan.decision,
+        direction: plan.direction,
+        ev: plan.expectedValue,
+        edge: plan.edge,
+        regime: plan.regime,
+        stabilityCount: stabilityCountRef.current,
+        pSim: plan.debugData?.pSim ?? 0,
+        pMarket: plan.debugData?.pMarket ?? 0,
+        pFinal: plan.finalProbability,
+      };
+      historyRef.current = [...historyRef.current.slice(-19), snapshot];
+      setDebugHistory([...historyRef.current]);
+
       // Track best positive-EV plan
       if (plan.decision === 'TRADE_NOW') {
         if (!bestPlanRef.current || plan.expectedValue > bestPlanRef.current.expectedValue) {
@@ -232,5 +252,6 @@ export function useSignalEngine() {
     stabilityCount,
     dataCollectionStart: dataCollectionStartRef.current,
     recalculate: compute,
+    debugHistory,
   };
 }

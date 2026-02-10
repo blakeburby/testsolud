@@ -442,6 +442,13 @@ export function generateTradePlan(inputs: SignalEngineInputs): TradePlan {
     regimeWeights: regimeResult.weights,
     blendWeights,
     computeTimeMs,
+    debugData: {
+      regimeDetection: regimeResult,
+      orderbookImbalance: obResult,
+      pSim,
+      pMarket,
+      pOB,
+    },
   };
 }
 

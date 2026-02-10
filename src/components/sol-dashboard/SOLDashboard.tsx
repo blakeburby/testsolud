@@ -7,6 +7,7 @@ import { SOLMarketsProvider } from '@/contexts/SOLMarketsContext';
  import { TradingButtons } from './TradingButtons';
  import { TradePlan } from './TradePlan';
  import { OrderbookLadder } from './OrderbookLadder';
+ import { DebugPanel } from './DebugPanel';
  
  function DashboardContent() {
    return (
@@ -18,6 +19,7 @@ import { SOLMarketsProvider } from '@/contexts/SOLMarketsContext';
          <TimeSlotPills />
           <TradingButtons />
           <TradePlan />
+          <DebugPanel />
           <OrderbookLadder />
        </div>
      </div>
