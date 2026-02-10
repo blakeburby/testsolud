@@ -77,12 +77,26 @@ export interface LockedTradePlan {
   bestEvSoFar: number;
 }
 
+export interface MCDistributionBin {
+  binCenter: number;
+  count: number;
+  frequency: number;
+  isAboveStrike: boolean;
+}
+
+export interface MCDistributionResult {
+  bins: MCDistributionBin[];
+  stats: { min: number; max: number; mean: number; median: number; p5: number; p95: number };
+  pAbove: number;
+}
+
 export interface DebugData {
   regimeDetection: RegimeDetection;
   orderbookImbalance: OrderbookImbalance;
   pSim: number;
   pMarket: number;
   pOB: number;
+  mcDistribution?: MCDistributionResult;
 }
 
 export interface DebugSnapshot {
