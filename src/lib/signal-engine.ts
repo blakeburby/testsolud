@@ -8,6 +8,8 @@ import type {
   KellyResult,
   TradePlan,
   SignalEngineInputs,
+  MCDistributionBin,
+  MCDistributionResult,
 } from '@/types/signal-engine';
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -170,6 +172,84 @@ export function runMonteCarloSim(
   }
 
   return totalAbove / numPaths;
+}
+
+// ── Monte Carlo Distribution (for visualization) ──────────────────────
+
+const VIZ_PATHS = 10_000;
+const NUM_BINS = 20;
+
+export function runMonteCarloDistribution(
+  currentPrice: number,
+  strike: number,
+  timeToExpirySec: number,
+  regimeVols: { r1: number; r2: number; r3: number },
+  regimeWeights: RegimeWeights,
+  totalWindowMs: number,
+): MCDistributionResult {
+  if (timeToExpirySec <= 0) {
+    const isAbove = currentPrice >= strike;
+    return {
+      bins: [{ binCenter: currentPrice, count: VIZ_PATHS, frequency: 1, isAboveStrike: isAbove }],
+      stats: { min: currentPrice, max: currentPrice, mean: currentPrice, median: currentPrice, p5: currentPrice, p95: currentPrice },
+      pAbove: isAbove ? 1 : 0,
+    };
+  }
+
+  const dt = timeToExpirySec;
+  const regimeConfigs = [
+    { vol: computeNonlinearVol(regimeVols.r1, timeToExpirySec * 1000, totalWindowMs), weight: regimeWeights.r1 },
+    { vol: computeNonlinearVol(regimeVols.r2, timeToExpirySec * 1000, totalWindowMs), weight: regimeWeights.r2 },
+    { vol: computeNonlinearVol(regimeVols.r3, timeToExpirySec * 1000, totalWindowMs), weight: regimeWeights.r3 },
+  ];
+
+  const finalPrices: number[] = [];
+
+  for (const { vol, weight } of regimeConfigs) {
+    if (weight < 0.001) continue;
+    const pathsForRegime = Math.round(VIZ_PATHS * weight);
+    const sigma = vol / Math.sqrt(ANNUALIZED_SECONDS);
+    const drift = -0.5 * sigma * sigma * dt;
+    const diffusion = sigma * Math.sqrt(dt);
+
+    for (let i = 0; i < pathsForRegime; i += 2) {
+      const [z1, z2] = boxMullerPair();
+      finalPrices.push(currentPrice * Math.exp(drift + diffusion * z1));
+      if (i + 1 < pathsForRegime) {
+        finalPrices.push(currentPrice * Math.exp(drift + diffusion * z2));
+      }
+    }
+  }
+
+  finalPrices.sort((a, b) => a - b);
+  const n = finalPrices.length;
+  const min = finalPrices[0];
+  const max = finalPrices[n - 1];
+  const mean = finalPrices.reduce((s, v) => s + v, 0) / n;
+  const median = finalPrices[Math.floor(n / 2)];
+  const p5 = finalPrices[Math.floor(n * 0.05)];
+  const p95 = finalPrices[Math.floor(n * 0.95)];
+  const pAbove = finalPrices.filter(p => p >= strike).length / n;
+
+  // Bucket into bins
+  const binWidth = (max - min) / NUM_BINS || 1;
+  const bins: MCDistributionBin[] = [];
+  for (let b = 0; b < NUM_BINS; b++) {
+    const binCenter = min + binWidth * (b + 0.5);
+    bins.push({ binCenter, count: 0, frequency: 0, isAboveStrike: binCenter >= strike });
+  }
+
+  for (const price of finalPrices) {
+    const idx = Math.min(Math.floor((price - min) / binWidth), NUM_BINS - 1);
+    bins[idx].count++;
+  }
+
+  const maxCount = Math.max(...bins.map(b => b.count));
+  for (const bin of bins) {
+    bin.frequency = maxCount > 0 ? bin.count / maxCount : 0;
+  }
+
+  return { bins, stats: { min, max, mean, median, p5, p95 }, pAbove };
 }
 
 // ── Orderbook Imbalance ────────────────────────────────────────────────
@@ -421,6 +501,12 @@ export function generateTradePlan(inputs: SignalEngineInputs): TradePlan {
 
   const computeTimeMs = performance.now() - startTime;
 
+  // MC distribution for visualization
+  const mcDistribution = runMonteCarloDistribution(
+    currentPrice, strikePrice, timeToExpirySec,
+    regimeVols, regimeResult.weights, totalWindowMs,
+  );
+
   return {
     decision,
     direction: tradeDirection,
@@ -448,7 +534,7 @@ export function generateTradePlan(inputs: SignalEngineInputs): TradePlan {
       pSim,
       pMarket,
       pOB,
+      mcDistribution,
     },
   };
 }
-
