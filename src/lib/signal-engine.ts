@@ -21,6 +21,15 @@ const ERROR_MARGIN = 0.02;
 const MIN_EDGE = 0.03;
 const MAX_KELLY_FRACTION = 0.5;
 
+/** Compute regime volatility triplet from a base annualized vol */
+export function getRegimeVols(baseVol: number): { r1: number; r2: number; r3: number } {
+  return {
+    r1: Math.max(baseVol * 0.6, 0.15),
+    r2: Math.max(baseVol * 1.3, 0.5),
+    r3: Math.max(baseVol * 2.0, 0.8),
+  };
+}
+
 // ── Box-Muller Normal RNG ──────────────────────────────────────────────
 
 function boxMullerPair(): [number, number] {
@@ -393,11 +402,7 @@ export function generateTradePlan(inputs: SignalEngineInputs): TradePlan {
   // 3. Monte Carlo simulation
   const timeToExpirySec = Math.max(timeToExpiryMs / 1000, 0);
   const baseVol = regimeResult.annualizedVol;
-  const regimeVols = {
-    r1: Math.max(baseVol * 0.6, 0.15),
-    r2: Math.max(baseVol * 1.3, 0.5),
-    r3: Math.max(baseVol * 2.0, 0.8),
-  };
+  const regimeVols = getRegimeVols(baseVol);
 
   const pSimAbove = runMonteCarloSim(
     currentPrice, strikePrice, timeToExpirySec,
