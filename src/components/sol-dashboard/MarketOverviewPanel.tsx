@@ -3,126 +3,85 @@ import { useQuantEngine } from '@/hooks/useQuantEngine';
 import { useCountdown } from '@/hooks/useCountdown';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
-import { TrendingUp, TrendingDown, Clock, Target, BarChart3 } from 'lucide-react';
+import { useMultiSourcePrice } from '@/hooks/useMultiSourcePrice';
+import { useState, useEffect } from 'react';
 
 export function MarketOverviewPanel() {
   const { currentPrice, selectedMarket, selectedSlot, wsConnected } = useSOLMarkets();
   const quant = useQuantEngine();
   const countdown = useCountdown(selectedSlot?.windowEnd ?? null);
+  const { sources, timestamp: wsTimestamp } = useMultiSourcePrice('SOL/USD');
+  const [latency, setLatency] = useState(0);
 
-  const strikePrice = selectedMarket?.strikePrice ?? 0;
-  const isAbove = currentPrice !== null && currentPrice >= strikePrice;
-  const priceDiff = currentPrice !== null ? currentPrice - strikePrice : 0;
+  useEffect(() => {
+    const id = setInterval(() => {
+      setLatency(wsTimestamp ? Date.now() - wsTimestamp : 0);
+    }, 200);
+    return () => clearInterval(id);
+  }, [wsTimestamp]);
+
+  const S0 = currentPrice ?? 0;
+  const K = selectedMarket?.strikePrice ?? 0;
+  const delta = S0 - K;
+  const isAbove = delta >= 0;
+  const edgeBps = quant.kelly.edge * 10000;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-      {/* Header row */}
+    <div className={cn("terminal-panel space-y-2", quant.kelly.hasSignal && (quant.kelly.signalDirection === 'YES' ? 'border-l-2 border-l-trading-up' : 'border-l-2 border-l-trading-down'))}>
+      {/* Status bar */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[hsl(var(--gold)/0.2)] to-[hsl(var(--gold)/0.05)] flex items-center justify-center border border-[hsl(var(--gold)/0.3)]">
-            <BarChart3 className="h-5 w-5 text-[hsl(var(--gold))]" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">SOL 15-Min Contract</h2>
-            {selectedSlot && (
-              <p className="text-xs text-muted-foreground">
-                {format(selectedSlot.windowStart, 'h:mm')}–{format(selectedSlot.windowEnd, 'h:mm a')} ET
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className={cn("h-2 w-2 rounded-full", wsConnected ? "bg-trading-up animate-pulse" : "bg-destructive")} />
-          <span className={cn("text-xs font-medium", wsConnected ? "text-trading-up" : "text-destructive")}>
-            {wsConnected ? "LIVE" : "OFFLINE"}
-          </span>
-        </div>
-      </div>
-
-      {/* Price grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Strike Price */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5">
-            <Target className="h-3 w-3 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Strike</span>
-          </div>
-          <p className="text-2xl font-bold text-foreground tabular-nums">${strikePrice.toFixed(2)}</p>
-        </div>
-
-        {/* Current Price */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5">
-            {isAbove ? <TrendingUp className="h-3 w-3 text-trading-up" /> : <TrendingDown className="h-3 w-3 text-trading-down" />}
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Current</span>
-            {priceDiff !== 0 && (
-              <span className={cn('text-xs font-semibold', isAbove ? 'text-trading-up' : 'text-trading-down')}>
-                {isAbove ? '+' : ''}{priceDiff.toFixed(2)}
-              </span>
-            )}
-          </div>
-          {currentPrice !== null ? (
-            <p className={cn('text-2xl font-bold tabular-nums', isAbove ? 'text-trading-up' : 'text-trading-down')}>
-              ${currentPrice.toFixed(2)}
-            </p>
-          ) : (
-            <div className="h-8 w-24 bg-muted animate-pulse rounded" />
+          <span className="text-xs font-semibold text-foreground uppercase tracking-wider">Market</span>
+          {selectedSlot && (
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {format(selectedSlot.windowStart, 'h:mm')}–{format(selectedSlot.windowEnd, 'h:mm a')}
+            </span>
           )}
         </div>
-
-        {/* Countdown */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5">
-            <Clock className="h-3 w-3 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Expires</span>
-          </div>
-          <p className={cn(
-            'text-2xl font-bold tabular-nums',
-            countdown.urgency === 'urgent' ? 'text-trading-down' : countdown.urgency === 'warning' ? 'text-[hsl(var(--timer-warning))]' : 'text-foreground'
-          )}>
-            {countdown.minutes}:{countdown.seconds.toString().padStart(2, '0')}
-          </p>
-        </div>
-
-        {/* Edge */}
-        <div className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Edge</span>
-          <div className="flex items-baseline gap-2">
-            <p className={cn(
-              'text-2xl font-bold tabular-nums',
-              quant.kelly.edge > 0 ? 'text-trading-up' : quant.kelly.edge < 0 ? 'text-trading-down' : 'text-muted-foreground'
-            )}>
-              {quant.kelly.edge > 0 ? '+' : ''}{(quant.kelly.edge * 100).toFixed(1)}%
-            </p>
-            {quant.kelly.hasSignal && (
-              <span className={cn(
-                'text-xs font-bold px-2 py-0.5 rounded',
-                quant.kelly.signalDirection === 'YES' ? 'bg-trading-up/20 text-trading-up' : 'bg-trading-down/20 text-trading-down'
-              )}>
-                {quant.kelly.signalDirection}
-              </span>
-            )}
-          </div>
+        <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
+          <span>{latency}ms</span>
+          <span>{quant.lastComputeMs.toFixed(0)}ms</span>
+          <span className="flex items-center gap-1">
+            <span className={cn("inline-block h-1.5 w-1.5 rounded-sm", sources.kraken ? "bg-trading-up" : "bg-destructive")} />K
+            <span className={cn("inline-block h-1.5 w-1.5 rounded-sm", sources.coinbase ? "bg-trading-up" : "bg-destructive")} />C
+            <span className={cn("inline-block h-1.5 w-1.5 rounded-sm", sources.binance ? "bg-trading-up" : "bg-destructive")} />B
+          </span>
+          <span className={cn("rounded-sm px-1", quant.ewma.volRegime === 'High' ? 'text-trading-down' : quant.ewma.volRegime === 'Medium' ? 'text-[hsl(var(--timer-warning))]' : 'text-trading-up')}>
+            {quant.ewma.volRegime}
+          </span>
+          <span>{quant.simMode === 'monte-carlo' ? 'MC' : 'CF'}</span>
         </div>
       </div>
 
-      {/* Probability comparison bar */}
-      <div className="space-y-2 pt-2 border-t border-border">
-        <div className="flex justify-between text-xs font-medium">
-          <span className="text-muted-foreground">Kalshi Market: <span className="text-foreground">{(quant.pMarket * 100).toFixed(1)}%</span></span>
-          <span className="text-muted-foreground">Model True: <span className={cn('font-bold', quant.kelly.edge > 0 ? 'text-trading-up' : 'text-trading-down')}>{(quant.pTrue * 100).toFixed(1)}%</span></span>
-        </div>
-        <div className="relative h-2 bg-muted rounded-full overflow-hidden">
-          <div 
-            className="absolute inset-y-0 left-0 bg-[hsl(var(--gold)/0.5)] rounded-full transition-all duration-500"
-            style={{ width: `${quant.pMarket * 100}%` }}
-          />
-          <div 
-            className={cn("absolute top-0 h-full w-0.5 transition-all duration-500", quant.kelly.edge > 0 ? 'bg-trading-up' : 'bg-trading-down')}
-            style={{ left: `${quant.pTrue * 100}%` }}
-          />
-        </div>
+      {/* Data rows */}
+      <div className="space-y-0.5">
+        <Row label="S₀" value={S0 !== 0 ? `$${S0.toFixed(4)}` : '—'} highlight={isAbove ? 'up' : 'down'} />
+        <Row label="K" value={`$${K.toFixed(4)}`} />
+        <Row label="Δ" value={`${delta >= 0 ? '+' : ''}${delta.toFixed(4)}`} highlight={isAbove ? 'up' : 'down'} />
+        <Row label="σ_total" value={`${(quant.microstructure.sigmaTotal * 100).toFixed(4)}%`} />
+        <Row label="μ_adj" value={quant.drift.hasMomentum ? `${(quant.drift.muAdj * 100).toFixed(4)}%` : '0'} />
+        <Row label="T" value={`${countdown.minutes}:${countdown.seconds.toString().padStart(2, '0')}`}
+          highlight={countdown.urgency === 'urgent' ? 'down' : countdown.urgency === 'warning' ? 'warn' : undefined} />
+        <div className="border-t border-border my-1" />
+        <Row label="P(mkt)" value={`${(quant.pMarket * 100).toFixed(2)}%`} />
+        <Row label="P(true)" value={`${(quant.pTrue * 100).toFixed(2)}%`} highlight={quant.kelly.edge > 0 ? 'up' : 'down'} />
+        <Row label="Edge" value={`${edgeBps >= 0 ? '+' : ''}${edgeBps.toFixed(1)} bps`} highlight={edgeBps > 0 ? 'up' : edgeBps < 0 ? 'down' : undefined} />
       </div>
+    </div>
+  );
+}
+
+function Row({ label, value, highlight }: { label: string; value: string; highlight?: 'up' | 'down' | 'warn' }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className={cn(
+        "text-sm font-mono font-semibold tabular-nums",
+        highlight === 'up' ? 'text-trading-up' :
+        highlight === 'down' ? 'text-trading-down' :
+        highlight === 'warn' ? 'text-[hsl(var(--timer-warning))]' :
+        'text-foreground'
+      )}>{value}</span>
     </div>
   );
 }
