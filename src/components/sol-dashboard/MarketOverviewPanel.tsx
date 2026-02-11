@@ -53,30 +53,55 @@ export function MarketOverviewPanel() {
         </div>
       </div>
 
-      {/* Data rows */}
+      {/* Hero metrics — the 3 most important values at a glance */}
+      <div className="grid grid-cols-3 gap-2 py-1.5 border-y border-border">
+        <div>
+          <span className="text-[10px] text-muted-foreground uppercase">SOL Price</span>
+          <p className={cn("text-lg font-mono font-bold tabular-nums", isAbove ? 'text-trading-up' : 'text-trading-down')}>
+            {S0 !== 0 ? `$${S0.toFixed(2)}` : '—'}
+          </p>
+        </div>
+        <div className="text-center">
+          <span className="text-[10px] text-muted-foreground uppercase">Time Left</span>
+          <p className={cn(
+            "text-lg font-mono font-bold tabular-nums",
+            countdown.urgency === 'urgent' ? 'text-trading-down' : countdown.urgency === 'warning' ? 'text-[hsl(var(--timer-warning))]' : 'text-foreground'
+          )}>
+            {countdown.minutes}:{countdown.seconds.toString().padStart(2, '0')}
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="text-[10px] text-muted-foreground uppercase">Edge</span>
+          <p className={cn(
+            "text-lg font-mono font-bold tabular-nums",
+            edgeBps > 0 ? 'text-trading-up' : edgeBps < 0 ? 'text-trading-down' : 'text-muted-foreground'
+          )}>
+            {edgeBps >= 0 ? '+' : ''}{edgeBps.toFixed(1)}<span className="text-xs font-normal text-muted-foreground ml-0.5">bps</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Detail rows */}
       <div className="space-y-0.5">
-        <Row label="S₀" value={S0 !== 0 ? `$${S0.toFixed(4)}` : '—'} highlight={isAbove ? 'up' : 'down'} />
-        <Row label="K" value={`$${K.toFixed(4)}`} />
-        <Row label="Δ" value={`${delta >= 0 ? '+' : ''}${delta.toFixed(4)}`} highlight={isAbove ? 'up' : 'down'} />
+        <Row label="Strike (K)" value={`$${K.toFixed(4)}`} />
+        <Row label="Δ (S₀ − K)" value={`${delta >= 0 ? '+' : ''}${delta.toFixed(4)}`} highlight={isAbove ? 'up' : 'down'} />
         <Row label="σ_total" value={`${(quant.microstructure.sigmaTotal * 100).toFixed(4)}%`} />
         <Row label="μ_adj" value={quant.drift.hasMomentum ? `${(quant.drift.muAdj * 100).toFixed(4)}%` : '0'} />
-        <Row label="T" value={`${countdown.minutes}:${countdown.seconds.toString().padStart(2, '0')}`}
-          highlight={countdown.urgency === 'urgent' ? 'down' : countdown.urgency === 'warning' ? 'warn' : undefined} />
         <div className="border-t border-border my-1" />
-        <Row label="P(mkt)" value={`${(quant.pMarket * 100).toFixed(2)}%`} />
-        <Row label="P(true)" value={`${(quant.pTrue * 100).toFixed(2)}%`} highlight={quant.kelly.edge > 0 ? 'up' : 'down'} />
-        <Row label="Edge" value={`${edgeBps >= 0 ? '+' : ''}${edgeBps.toFixed(1)} bps`} highlight={edgeBps > 0 ? 'up' : edgeBps < 0 ? 'down' : undefined} />
+        <Row label="P(market)" value={`${(quant.pMarket * 100).toFixed(2)}%`} />
+        <Row label="P(true)" value={`${(quant.pTrue * 100).toFixed(2)}%`} highlight={quant.kelly.edge > 0 ? 'up' : 'down'} emphasis />
       </div>
     </div>
   );
 }
 
-function Row({ label, value, highlight }: { label: string; value: string; highlight?: 'up' | 'down' | 'warn' }) {
+function Row({ label, value, highlight, emphasis }: { label: string; value: string; highlight?: 'up' | 'down' | 'warn'; emphasis?: boolean }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className={cn("flex items-center justify-between", emphasis && "py-0.5 bg-muted/30 px-1 -mx-1 rounded-sm")}>
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className={cn(
-        "text-sm font-mono font-semibold tabular-nums",
+        "font-mono font-semibold tabular-nums",
+        emphasis ? "text-base" : "text-sm",
         highlight === 'up' ? 'text-trading-up' :
         highlight === 'down' ? 'text-trading-down' :
         highlight === 'warn' ? 'text-[hsl(var(--timer-warning))]' :

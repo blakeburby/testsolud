@@ -23,8 +23,15 @@ export function VolatilityPanel() {
         )}
       </div>
 
+      {/* Hero: Annualized vol */}
+      <div className="py-1.5 border-y border-border">
+        <span className="text-[10px] text-muted-foreground uppercase">EWMA σ (Annualized)</span>
+        <p className="text-lg font-mono font-bold tabular-nums text-foreground">
+          {quant.ewma.isCalibrated ? `${(quant.ewma.annualizedVol * 100).toFixed(1)}%` : '—'}
+        </p>
+      </div>
+
       <div className="space-y-0.5">
-        <StatRow label="EWMA σ (ann.)" value={quant.ewma.isCalibrated ? `${(quant.ewma.annualizedVol * 100).toFixed(1)}%` : '—'} />
         <StatRow label="λ" value="0.94" muted />
         <StatRow label="1-min variance" value={quant.ewma.isCalibrated ? quant.ewma.variance.toExponential(3) : '—'} />
         <StatRow label="η (floor)" value={`${(quant.microstructure.eta * 10000).toFixed(1)} bps`} />

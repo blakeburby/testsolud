@@ -36,18 +36,24 @@ export function SimulationPanel() {
         </div>
       </div>
 
-      {/* Large probability readout */}
-      <div className="flex items-baseline gap-3">
-        <span className="text-base font-mono font-bold tabular-nums text-trading-up">
-          P(Up) = {(quant.pTrue * 100).toFixed(2)}%
-        </span>
-        <span className="text-base font-mono font-bold tabular-nums text-trading-down">
-          P(Dn) = {((1 - quant.pTrue) * 100).toFixed(2)}%
-        </span>
+      {/* Hero probability readout */}
+      <div className="flex items-baseline justify-between py-1.5 border-y border-border">
+        <div>
+          <span className="text-[10px] text-muted-foreground uppercase">P(Up)</span>
+          <p className="text-xl font-mono font-bold tabular-nums text-trading-up">
+            {(quant.pTrue * 100).toFixed(2)}%
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="text-[10px] text-muted-foreground uppercase">P(Down)</span>
+          <p className="text-xl font-mono font-bold tabular-nums text-trading-down">
+            {((1 - quant.pTrue) * 100).toFixed(2)}%
+          </p>
+        </div>
       </div>
 
       {histogram.length > 0 ? (
-        <div className="h-[160px] w-full">
+        <div className="h-[140px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={histogram} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
               <XAxis
@@ -90,12 +96,11 @@ export function SimulationPanel() {
           </ResponsiveContainer>
         </div>
       ) : (
-        <div className="h-[160px] flex items-center justify-center text-muted-foreground text-xs">
+        <div className="h-[140px] flex items-center justify-center text-muted-foreground text-xs">
           {quant.isReady ? 'No simulation data' : 'Waiting for data...'}
         </div>
       )}
 
-      {/* Mode label */}
       <div className="text-[10px] font-mono text-muted-foreground text-center">
         {quant.simMode === 'monte-carlo' ? 'Monte Carlo' : 'Black-Scholes'}
       </div>

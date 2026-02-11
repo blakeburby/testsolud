@@ -18,6 +18,26 @@ export function PositioningPanel() {
         )}
       </div>
 
+      {/* Hero: Allocation */}
+      <div className="py-1.5 border-y border-border flex items-center justify-between">
+        <div>
+          <span className="text-[10px] text-muted-foreground uppercase">¼ Kelly Allocation</span>
+          <p className="text-lg font-mono font-bold tabular-nums text-[hsl(var(--gold))]">
+            ${(kelly.quarterKelly * bankroll).toFixed(2)}
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="text-[10px] text-muted-foreground uppercase">Signal</span>
+          {kelly.hasSignal ? (
+            <p className={cn("text-lg font-mono font-bold", kelly.signalDirection === 'YES' ? 'text-trading-up' : 'text-trading-down')}>
+              {kelly.signalDirection}
+            </p>
+          ) : (
+            <p className="text-lg font-mono font-bold text-muted-foreground">—</p>
+          )}
+        </div>
+      </div>
+
       {/* Bankroll */}
       <div className="flex items-center gap-2">
         <span className="text-[10px] text-muted-foreground">Bankroll</span>
@@ -31,12 +51,11 @@ export function PositioningPanel() {
 
       <div className="space-y-0.5">
         <Row label="P(true)" value={`${(quant.pTrue * 100).toFixed(2)}%`} />
-        <Row label="P(mkt)" value={`${(quant.pMarket * 100).toFixed(2)}%`} />
-        <Row label="Edge" value={`${edgeBps >= 0 ? '+' : ''}${edgeBps.toFixed(1)} bps`} highlight={edgeBps > 0 ? 'up' : edgeBps < 0 ? 'down' : undefined} />
+        <Row label="P(market)" value={`${(quant.pMarket * 100).toFixed(2)}%`} />
+        <Row label="Edge" value={`${edgeBps >= 0 ? '+' : ''}${edgeBps.toFixed(1)} bps`} highlight={edgeBps > 0 ? 'up' : edgeBps < 0 ? 'down' : undefined} emphasis />
         <div className="border-t border-border my-1" />
         <Row label="Full Kelly" value={`${(kelly.fullKelly * 100).toFixed(2)}%`} />
         <Row label="¼ Kelly" value={`${(kelly.quarterKelly * 100).toFixed(2)}%`} highlight={kelly.hasSignal ? 'gold' : undefined} />
-        <Row label="Allocation" value={`$${(kelly.quarterKelly * bankroll).toFixed(2)}`} />
         <Row label="EV per $1" value={`${evPerDollar >= 0 ? '+' : ''}${(evPerDollar * 100).toFixed(3)}¢`} />
         <div className="border-t border-border my-1" />
         <div className="flex items-center justify-between">
@@ -50,25 +69,18 @@ export function PositioningPanel() {
             {kelly.confidence}
           </span>
         </div>
-        {kelly.hasSignal && (
-          <div className="flex items-center justify-between pt-1">
-            <span className="text-xs text-muted-foreground">Signal</span>
-            <span className={cn("text-sm font-mono font-bold", kelly.signalDirection === 'YES' ? 'text-trading-up' : 'text-trading-down')}>
-              {kelly.signalDirection}
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function Row({ label, value, highlight }: { label: string; value: string; highlight?: 'up' | 'down' | 'gold' }) {
+function Row({ label, value, highlight, emphasis }: { label: string; value: string; highlight?: 'up' | 'down' | 'gold'; emphasis?: boolean }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className={cn("flex items-center justify-between", emphasis && "py-0.5 bg-muted/30 px-1 -mx-1 rounded-sm")}>
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className={cn(
-        "text-sm font-mono font-semibold tabular-nums",
+        "font-mono font-semibold tabular-nums",
+        emphasis ? "text-base" : "text-sm",
         highlight === 'up' ? 'text-trading-up' :
         highlight === 'down' ? 'text-trading-down' :
         highlight === 'gold' ? 'text-[hsl(var(--gold))]' :
