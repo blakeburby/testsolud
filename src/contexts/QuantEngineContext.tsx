@@ -48,6 +48,21 @@ export function QuantEngineProvider({ children }: { children: React.ReactNode })
   const [simMode, setSimMode] = useState<SimMode>('monte-carlo');
   const [bankroll, setBankroll] = useState(1000);
 
+  // Refs for rapidly-changing values (updated every render, no effect re-runs)
+  const priceRef = useRef(currentPrice);
+  const historyRef = useRef(priceHistory);
+  const marketRef = useRef(selectedMarket);
+  const slotRef = useRef(selectedSlot);
+  const simModeRef = useRef(simMode);
+  const bankrollRef = useRef(bankroll);
+
+  priceRef.current = currentPrice;
+  historyRef.current = priceHistory;
+  marketRef.current = selectedMarket;
+  slotRef.current = selectedSlot;
+  simModeRef.current = simMode;
+  bankrollRef.current = bankroll;
+
   // Computed state
   const [state, setState] = useState({
     ewma: INITIAL_EWMA,
@@ -72,60 +87,51 @@ export function QuantEngineProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     const compute = () => {
       const start = performance.now();
+      const cp = priceRef.current;
+      const ph = historyRef.current;
+      const sm = marketRef.current;
+      const ss = slotRef.current;
+      const mode = simModeRef.current;
+      const br = bankrollRef.current;
 
-      if (!currentPrice || !selectedMarket || !selectedSlot) {
+      if (!cp || !sm || !ss) {
         setState(prev => ({ ...prev, isReady: false }));
         return;
       }
 
-      const S0 = currentPrice;
-      const K = selectedMarket.strikePrice;
+      const S0 = cp;
+      const K = sm.strikePrice;
 
-      // Time remaining
       const now = Date.now();
-      const msRemaining = Math.max(0, selectedSlot.windowEnd.getTime() - now);
+      const msRemaining = Math.max(0, ss.windowEnd.getTime() - now);
       const minutesRemaining = msRemaining / 60000;
       const T = minutesToYears(minutesRemaining);
 
-      // EWMA volatility
-      const sortedPrices = [...priceHistory].sort((a, b) => a.time - b.time);
+      const sortedPrices = [...ph].sort((a, b) => a.time - b.time);
       const ewma = computeEWMA(sortedPrices);
-
-      // Log returns for drift
       const logReturns = computeLogReturns(sortedPrices);
       const drift = computeMomentumDrift(logReturns);
-
-      // Microstructure floor
       const sigmaAnnual = ewma.isCalibrated ? ewma.annualizedVol : 0.60;
       const microstructure = applyMicrostructureFloor(sigmaAnnual, T);
+      const pMarket = sm.yesPrice ?? 0.5;
 
-      // Market probability from Kalshi
-      const pMarket = selectedMarket.yesPrice ?? 0.5;
-
-      // Simulation
       let pTrue = 0.5;
       let simulation: MonteCarloResult | null = null;
       let closedForm: ClosedFormResult | null = null;
-      let activeMode = simMode;
+      let activeMode = mode;
 
       if (T > 0) {
         if (activeMode === 'monte-carlo') {
           simulation = runMonteCarlo(S0, K, T, microstructure.sigmaTotal, drift.muAdj);
           pTrue = simulation.pUp;
-
-          // If MC is too slow this cycle, also compute CF as supplement but don't permanently disable MC
           if (simulation.executionMs > 150) {
-            // Use CF for this cycle's pTrue but keep MC data for histogram
             closedForm = closedFormProbability(S0, K, T, microstructure.sigmaTotal, drift.muAdj);
             pTrue = closedForm.pUp;
           }
         }
-
-        // Always compute closed-form for comparison
         if (!closedForm) {
           closedForm = closedFormProbability(S0, K, T, microstructure.sigmaTotal, drift.muAdj);
         }
-
         if (activeMode === 'closed-form') {
           pTrue = closedForm.pUp;
         }
@@ -133,32 +139,19 @@ export function QuantEngineProvider({ children }: { children: React.ReactNode })
         pTrue = S0 > K ? 1 : 0;
       }
 
-      // Kelly sizing
-      const kelly = computeKelly(pTrue, pMarket, bankroll);
-
+      const kelly = computeKelly(pTrue, pMarket, br);
       const lastComputeMs = performance.now() - start;
 
       setState({
-        ewma,
-        microstructure,
-        drift,
-        pTrue,
-        simulation,
-        closedForm,
-        activeMode,
-        pMarket,
-        kelly,
-        T,
-        minutesRemaining,
-        isReady: true,
-        lastComputeMs,
+        ewma, microstructure, drift, pTrue, simulation, closedForm,
+        activeMode, pMarket, kelly, T, minutesRemaining, isReady: true, lastComputeMs,
       });
     };
 
     compute();
     const interval = setInterval(compute, 1000);
     return () => clearInterval(interval);
-  }, [currentPrice, priceHistory, selectedMarket, selectedSlot, simMode, bankroll]);
+  }, []); // stable — reads from refs
 
   const value: QuantEngineState = {
     ...state,
