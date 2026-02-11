@@ -1,8 +1,8 @@
-import { useQuantEngine } from '@/hooks/useQuantEngine';
+import { useSharedQuantEngine } from '@/contexts/QuantEngineContext';
 import { cn } from '@/lib/utils';
 
 export function VolatilityPanel() {
-  const quant = useQuantEngine();
+  const quant = useSharedQuantEngine();
 
   const regimeColor = {
     Low: 'text-trading-up bg-trading-up/10',

@@ -1,10 +1,8 @@
-import { useQuantEngine } from '@/hooks/useQuantEngine';
+import { useSharedQuantEngine } from '@/contexts/QuantEngineContext';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
 
 export function PositioningPanel() {
-  const quant = useQuantEngine();
-  const [bankroll, setBankroll] = useState(1000);
+  const quant = useSharedQuantEngine();
   const kelly = quant.kelly;
   const edgeBps = kelly.edge * 10000;
   const evPerDollar = kelly.edge * kelly.quarterKelly;
@@ -23,7 +21,7 @@ export function PositioningPanel() {
         <div>
           <span className="text-[10px] text-muted-foreground uppercase">¼ Kelly Allocation</span>
           <p className="text-lg font-mono font-bold tabular-nums text-[hsl(var(--gold))]">
-            ${(kelly.quarterKelly * bankroll).toFixed(2)}
+            ${(kelly.quarterKelly * quant.bankroll).toFixed(2)}
           </p>
         </div>
         <div className="text-right">
@@ -43,8 +41,8 @@ export function PositioningPanel() {
         <span className="text-[10px] text-muted-foreground">Bankroll</span>
         <input
           type="number"
-          value={bankroll}
-          onChange={(e) => setBankroll(Math.max(0, Number(e.target.value)))}
+          value={quant.bankroll}
+          onChange={(e) => quant.setBankroll(Math.max(0, Number(e.target.value)))}
           className="w-20 bg-muted border border-border rounded-sm px-1.5 py-0.5 text-xs font-mono text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-border"
         />
       </div>

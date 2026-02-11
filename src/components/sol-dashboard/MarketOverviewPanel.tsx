@@ -1,5 +1,5 @@
 import { useSOLMarkets } from '@/contexts/SOLMarketsContext';
-import { useQuantEngine } from '@/hooks/useQuantEngine';
+import { useSharedQuantEngine } from '@/contexts/QuantEngineContext';
 import { useCountdown } from '@/hooks/useCountdown';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react';
 
 export function MarketOverviewPanel() {
   const { currentPrice, selectedMarket, selectedSlot, wsConnected } = useSOLMarkets();
-  const quant = useQuantEngine();
+  const quant = useSharedQuantEngine();
   const countdown = useCountdown(selectedSlot?.windowEnd ?? null);
   const { sources, timestamp: wsTimestamp } = useMultiSourcePrice('SOL/USD');
   const [latency, setLatency] = useState(0);
@@ -53,7 +53,7 @@ export function MarketOverviewPanel() {
         </div>
       </div>
 
-      {/* Hero metrics — the 3 most important values at a glance */}
+      {/* Hero metrics */}
       <div className="grid grid-cols-3 gap-2 py-1.5 border-y border-border">
         <div>
           <span className="text-[10px] text-muted-foreground uppercase">SOL Price</span>
