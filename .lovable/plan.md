@@ -1,39 +1,55 @@
 
 
-# Real-Time Monte Carlo Updates (Every Second)
+# Fix Kalshi Markets API - Add Authentication
 
 ## Problem
 
-The Monte Carlo distribution visualization only updates when the full signal engine recomputes (debounced at 500ms, but gated by stability/commitment logic). Once committed, it stops updating entirely. The user wants the MC visuals to refresh every ~1 second with the latest price.
+The Kalshi Markets API is returning **401 "token authentication failure"** on every request. The `kalshi-markets` edge function currently makes **unauthenticated** requests to Kalshi, but Kalshi now requires authentication even for public endpoints like `/markets`.
 
-## Solution
+The `kalshi-orderbook` function already uses authentication (API key + RSA-PSS signature) and works correctly. The `kalshi-markets` function needs the same authentication logic.
 
-Decouple the MC distribution computation from the main signal engine loop. Run it independently on a 1-second interval directly in the `DebugPanel` component, using the latest price and market data from context.
+## Root Cause
 
-## Changes
+| Function | Authentication | Status |
+|----------|---------------|--------|
+| `kalshi-orderbook` | API key + RSA signature | Working |
+| `kalshi-markets` | None (anonymous) | **401 errors** |
 
-### 1. `src/components/sol-dashboard/DebugPanel.tsx`
+Your `KALSHI_API_KEY` and `KALSHI_PRIVATE_KEY` secrets are already configured -- they just aren't being used by the markets function.
 
-- Import `useSOLMarkets` and `runMonteCarloDistribution` + `detectRegime` directly
-- Add a `useEffect` with a 1-second `setInterval` that:
-  - Reads `currentPrice`, `selectedMarket`, `selectedSlot`, `priceHistory` from context
-  - Calls `detectRegime()` to get regime vols/weights
-  - Calls `runMonteCarloDistribution()` with the latest price
-  - Stores result in local state (`liveMcDistribution`)
-- Pass `liveMcDistribution` to the `MCSection` instead of the stale `debugData.mcDistribution`
-- Only run the interval when the panel is open (check `open` state) to avoid wasted compute when collapsed
+## Fix
 
-### 2. `src/lib/signal-engine.ts`
+**File:** `supabase/functions/kalshi-markets/index.ts`
 
-- Export `getRegimeVols()` (or inline the vol constants) so the debug panel can compute regime-weighted vols without duplicating logic
-- The existing `runMonteCarloDistribution` is already exported -- no changes needed there
+Copy the authentication logic from `kalshi-orderbook` into `kalshi-markets`:
 
-## No other files need changes.
+1. Add the `importPrivateKey()` function (RSA key import from PEM)
+2. Add the `signRequest()` function (RSA-PSS signature generation)
+3. Load `KALSHI_API_KEY` and `KALSHI_PRIVATE_KEY` from environment
+4. Generate authentication headers (`KALSHI-ACCESS-KEY`, `KALSHI-ACCESS-TIMESTAMP`, `KALSHI-ACCESS-SIGNATURE`) for each request
+5. Include these headers in the `fetchWithRetry` call
 
 ## Technical Details
 
-- The 10k-path sim takes ~5-10ms, so running it every 1s is negligible
-- When the debug panel is collapsed, the interval is cleared (no wasted CPU)
-- The main signal engine loop remains unchanged -- this is a purely additive visualization layer
-- Regime vols are constants already defined in the engine; we just need to export them or the helper
+The authentication flow (already working in `kalshi-orderbook`):
 
+1. Load RSA private key from `KALSHI_PRIVATE_KEY` secret (PKCS#8 PEM format)
+2. For each request, generate a signature over `{timestamp}{method}{path}` using RSA-PSS with SHA-256
+3. Send three headers with every request:
+   - `KALSHI-ACCESS-KEY`: The API key
+   - `KALSHI-ACCESS-TIMESTAMP`: Current timestamp in milliseconds
+   - `KALSHI-ACCESS-SIGNATURE`: Base64-encoded RSA-PSS signature
+
+The path used for signing must match the API path exactly (e.g., `/trade-api/v2/markets?series_ticker=KXSOL15M&status=open&limit=100`).
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `supabase/functions/kalshi-markets/index.ts` | Add RSA authentication (import from orderbook pattern) |
+
+## Expected Outcome
+
+- All Kalshi API calls will be authenticated
+- 401 errors will stop
+- Market data and orderbook data will both load correctly

@@ -5,9 +5,7 @@ import { SOLMarketsProvider } from '@/contexts/SOLMarketsContext';
  import { PriceChart } from './PriceChart';
  import { TimeSlotPills } from './TimeSlotPills';
  import { TradingButtons } from './TradingButtons';
- import { TradePlan } from './TradePlan';
  import { OrderbookLadder } from './OrderbookLadder';
- import { DebugPanel } from './DebugPanel';
  
  function DashboardContent() {
    return (
@@ -17,10 +15,8 @@ import { SOLMarketsProvider } from '@/contexts/SOLMarketsContext';
          <PriceSection />
          <PriceChart />
          <TimeSlotPills />
-          <TradingButtons />
-          <TradePlan />
-          <DebugPanel />
-          <OrderbookLadder />
+         <TradingButtons />
+         <OrderbookLadder />
        </div>
      </div>
    );
