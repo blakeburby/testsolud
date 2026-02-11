@@ -1,16 +1,10 @@
-import { useQuantEngine } from '@/hooks/useQuantEngine';
+import { useSharedQuantEngine } from '@/contexts/QuantEngineContext';
 import { cn } from '@/lib/utils';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, ReferenceLine, Tooltip } from 'recharts';
 
 export function SimulationPanel() {
-  const quant = useQuantEngine();
+  const quant = useSharedQuantEngine();
   const histogram = quant.simulation?.histogram ?? [];
-
-  const toggleMode = () => {
-    if ((window as any).__quantToggleSimMode) {
-      (window as any).__quantToggleSimMode();
-    }
-  };
 
   return (
     <div className="terminal-panel space-y-2">
@@ -23,7 +17,7 @@ export function SimulationPanel() {
             </span>
           )}
           <button
-            onClick={toggleMode}
+            onClick={quant.toggleSimMode}
             className={cn(
               "text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-sm border",
               quant.simMode === 'monte-carlo'
