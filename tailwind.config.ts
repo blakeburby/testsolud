@@ -64,11 +64,14 @@ export default {
          timer: {
            warning: "hsl(var(--timer-warning))",
          },
-         chart: {
-           "1": "hsl(var(--chart-1))",
-           line: "hsl(var(--chart-line))",
-           target: "hsl(var(--target-line))",
-         },
+          chart: {
+            "1": "hsl(var(--chart-1))",
+            line: "hsl(var(--chart-line))",
+            target: "hsl(var(--target-line))",
+          },
+          gold: {
+            DEFAULT: "hsl(var(--gold))",
+          },
       },
       borderRadius: {
         lg: "var(--radius)",
