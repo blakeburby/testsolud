@@ -1,11 +1,8 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface Section {
-  title: string;
-  content: string;
-}
+interface Section { title: string; content: string; }
 
 const SECTIONS: Section[] = [
   {
@@ -118,45 +115,28 @@ export function StrategySummary() {
   const toggleSection = (idx: number) => {
     setOpenSections(prev => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
       return next;
     });
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-5 hover:bg-muted/30 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <BookOpen className="h-4 w-4 text-[hsl(var(--gold))]" />
-          <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">Strategy Summary</h3>
-        </div>
-        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", isOpen && "rotate-180")} />
+    <div className="rounded-sm border border-border bg-card overflow-hidden">
+      <button onClick={() => setIsOpen(!isOpen)} className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/30">
+        <span className="text-xs font-semibold text-foreground uppercase tracking-wider">Strategy Summary</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground", isOpen && "rotate-180")} />
       </button>
-
       {isOpen && (
         <div className="border-t border-border">
           {SECTIONS.map((section, idx) => (
             <div key={idx} className="border-b border-border last:border-b-0">
-              <button
-                onClick={() => toggleSection(idx)}
-                className="w-full flex items-center gap-2 px-5 py-3 hover:bg-muted/20 transition-colors"
-              >
-                {openSections.has(idx) ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-[hsl(var(--gold))]" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                )}
-                <span className="text-sm font-medium text-foreground">{section.title}</span>
+              <button onClick={() => toggleSection(idx)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/20">
+                {openSections.has(idx) ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
+                <span className="text-xs font-medium text-foreground">{section.title}</span>
               </button>
               {openSections.has(idx) && (
-                <div className="px-5 pb-4 pl-10">
-                  <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
-                    {section.content}
-                  </pre>
+                <div className="px-3 pb-3 pl-8">
+                  <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{section.content}</pre>
                 </div>
               )}
             </div>

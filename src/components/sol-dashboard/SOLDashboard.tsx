@@ -13,32 +13,25 @@ import { StrategySummary } from './StrategySummary';
 function DashboardContent() {
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
-        {/* Market Overview — full width */}
-        <MarketOverviewPanel />
+      <div className="max-w-[1600px] mx-auto px-3 py-3 space-y-2">
+        {/* Row 1: 3-column grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+          <MarketOverviewPanel />
+          <SimulationPanel />
+          <PositioningPanel />
+        </div>
 
-        {/* Two-column grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left column — 2/3 */}
-          <div className="lg:col-span-2 space-y-4">
-            <PriceChart />
-            <SimulationPanel />
-          </div>
-
-          {/* Right column — 1/3 */}
-          <div className="space-y-4">
-            <VolatilityPanel />
-            <PositioningPanel />
-            <EdgeHeatmap />
-          </div>
+        {/* Row 2: 3-column grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+          <VolatilityPanel />
+          <PriceChart />
+          <EdgeHeatmap />
         </div>
 
         {/* Trading controls */}
         <TimeSlotPills />
         <TradingButtons />
         <OrderbookLadder />
-
-        {/* Strategy documentation */}
         <StrategySummary />
       </div>
     </div>
