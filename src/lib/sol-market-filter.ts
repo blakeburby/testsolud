@@ -1,4 +1,4 @@
- import type { SOLMarket, KalshiMarketResponse, TimeSlot, KalshiFullMarketResponse } from '@/types/sol-markets';
+import type { SOLMarket, KalshiMarketResponse, TimeSlot, KalshiFullMarketResponse } from '@/types/sol-markets';
  
 // Matches various SOL market tickers:
 // - 15-min format: SOLUSDUP-26FEB05-T1645, SOLUSDDOWN-26FEB05-T1645
@@ -72,73 +72,98 @@ export function isSOLMarket(ticker: string): boolean {
  }
  
  // Parse full Kalshi market response into SOLMarket
- export function parseKalshiFullMarket(m: KalshiFullMarketResponse): SOLMarket | null {
-  // Use open_time and close_time directly from API
-  const windowStart = new Date(m.open_time);
-  const windowEnd = new Date(m.close_time);
-  const closeTime = windowEnd;
-   
-   // Get strike from functional_strike or extract from title
-  let strikePrice = 0;
-  if (m.functional_strike) {
-    strikePrice = parseFloat(m.functional_strike);
-  } else if (m.floor_strike) {
-    strikePrice = m.floor_strike;
-  } else if (m.cap_strike) {
-    strikePrice = m.cap_strike;
-  } else if (m.yes_sub_title) {
-    // Parse from "Price to beat: $90.7959"
-    const match = m.yes_sub_title.match(/\$(\d+\.?\d*)/);
-    if (match) strikePrice = parseFloat(match[1]);
-  } else {
-    strikePrice = extractStrikePrice(m.title) ?? 0;
+export function parseKalshiFullMarket(m: KalshiFullMarketResponse | KalshiMarketResponse): SOLMarket | null {
+    // Debug: log raw fields to identify which shape we received
+    const raw = m as any;
+    console.log('[DEBUG parseKalshiFullMarket]', {
+      ticker: raw.ticker,
+      market_ticker: raw.market_ticker,
+      functional_strike: raw.functional_strike,
+      floor_strike: raw.floor_strike,
+      cap_strike: raw.cap_strike,
+      yes_sub_title: raw.yes_sub_title,
+      title: m.title,
+      open_time: raw.open_time,
+      close_time: m.close_time,
+      last_price: raw.last_price,
+      last_price_dollars: raw.last_price_dollars,
+    });
+
+    // Handle both response shapes for ticker
+    const ticker: string = raw.ticker || raw.market_ticker;
+    if (!ticker) return null;
+
+    // Handle timestamps - full endpoint has open_time, list endpoint doesn't
+    const closeTime = new Date(m.close_time);
+    const windowEnd = closeTime;
+    const windowStart = raw.open_time
+      ? new Date(raw.open_time)
+      : new Date(closeTime.getTime() - 15 * 60 * 1000);
+
+    // Get strike from multiple sources (full endpoint fields first, then title fallback)
+    let strikePrice = 0;
+    if (raw.functional_strike) {
+      strikePrice = parseFloat(raw.functional_strike);
+    } else if (raw.floor_strike) {
+      strikePrice = raw.floor_strike;
+    } else if (raw.cap_strike) {
+      strikePrice = raw.cap_strike;
+    } else if (raw.yes_sub_title) {
+      const match = raw.yes_sub_title.match(/\$(\d+\.?\d*)/);
+      if (match) strikePrice = parseFloat(match[1]);
+    }
+    // Always fall back to title extraction if strike is still 0
+    if (strikePrice === 0) {
+      strikePrice = extractStrikePrice(m.title) ?? 0;
+    }
+
+    console.log('[DEBUG parseKalshiFullMarket] extracted strike:', strikePrice, 'from title:', m.title);
+
+    // Determine direction from strike_type or title
+    let direction: 'up' | 'down' = 'up';
+    if (raw.strike_type) {
+      direction = (raw.strike_type === 'greater' || raw.strike_type === 'greater_or_equal')
+        ? 'up'
+        : 'down';
+    } else if (raw.floor_strike) {
+      direction = 'up';
+    } else if (raw.cap_strike) {
+      direction = 'down';
+    } else {
+      const titleLower = m.title.toLowerCase();
+      if (titleLower.includes('down') || titleLower.includes('below') || titleLower.includes('less')) {
+        direction = 'down';
+      }
+    }
+
+    // Parse prices - prefer dollar format, fall back to cents
+    const yesBid = raw.yes_bid_dollars ? parseFloat(raw.yes_bid_dollars) : (raw.yes_bid ? raw.yes_bid / 100 : null);
+    const yesAsk = raw.yes_ask_dollars ? parseFloat(raw.yes_ask_dollars) : (raw.yes_ask ? raw.yes_ask / 100 : null);
+    const noBid = raw.no_bid_dollars ? parseFloat(raw.no_bid_dollars) : (raw.no_bid ? raw.no_bid / 100 : null);
+    const noAsk = raw.no_ask_dollars ? parseFloat(raw.no_ask_dollars) : (raw.no_ask ? raw.no_ask / 100 : null);
+    const lastPrice = raw.last_price_dollars ? parseFloat(raw.last_price_dollars) : (raw.last_price ? raw.last_price / 100 : null);
+
+    return {
+      ticker,
+      eventTicker: m.event_ticker,
+      title: m.title,
+      strikePrice,
+      direction,
+      windowStart,
+      windowEnd,
+      closeTime,
+      status: m.status === 'open' || m.status === 'active' ? 'open' : 'closed',
+      yesPrice: lastPrice,
+      noPrice: lastPrice !== null ? 1 - lastPrice : null,
+      yesBid,
+      yesAsk,
+      noBid,
+      noAsk,
+      volume: m.volume,
+      volume24h: m.volume_24h,
+      lastUpdated: new Date(),
+    };
   }
-   
-   // Determine direction from strike_type or title
-   let direction: 'up' | 'down' = 'up';
-   if (m.strike_type) {
-    direction = (m.strike_type === 'greater' || m.strike_type === 'greater_or_equal') 
-      ? 'up' 
-      : 'down';
-  } else if (m.floor_strike) {
-    direction = 'up'; // floor_strike means price must go above
-  } else if (m.cap_strike) {
-    direction = 'down'; // cap_strike means price must go below
-  } else {
-     const titleLower = m.title.toLowerCase();
-     if (titleLower.includes('down') || titleLower.includes('below') || titleLower.includes('less')) {
-       direction = 'down';
-     }
-   }
-   
-   // Parse prices - prefer dollar format for accuracy
-   const yesBid = m.yes_bid_dollars ? parseFloat(m.yes_bid_dollars) : (m.yes_bid ? m.yes_bid / 100 : null);
-   const yesAsk = m.yes_ask_dollars ? parseFloat(m.yes_ask_dollars) : (m.yes_ask ? m.yes_ask / 100 : null);
-   const noBid = m.no_bid_dollars ? parseFloat(m.no_bid_dollars) : (m.no_bid ? m.no_bid / 100 : null);
-   const noAsk = m.no_ask_dollars ? parseFloat(m.no_ask_dollars) : (m.no_ask ? m.no_ask / 100 : null);
-   const lastPrice = m.last_price_dollars ? parseFloat(m.last_price_dollars) : (m.last_price ? m.last_price / 100 : null);
-   
-   return {
-     ticker: m.ticker,
-     eventTicker: m.event_ticker,
-     title: m.title,
-     strikePrice,
-     direction,
-     windowStart,
-     windowEnd,
-     closeTime,
-     status: m.status === 'open' || m.status === 'active' ? 'open' : 'closed',
-     yesPrice: lastPrice,
-     noPrice: lastPrice !== null ? 1 - lastPrice : null,
-     yesBid,
-     yesAsk,
-     noBid,
-     noAsk,
-     volume: m.volume,
-     volume24h: m.volume_24h,
-     lastUpdated: new Date(),
-   };
- }
  
  export function extractStrikePrice(title: string): number | null {
   // Title formats:
