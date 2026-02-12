@@ -57,7 +57,11 @@ function normalCDF(x: number): number {
 
 /**
  * Run Monte Carlo simulation.
- * S_T = S₀ × exp((μ_adj − 0.5σ²)T + σ√T × Z)
+ * S_T = S₀ × exp(μ_adj·T − 0.5·σ_total² + σ_total × Z)
+ * 
+ * IMPORTANT: sigmaTotal is the TOTAL period standard deviation (already time-scaled),
+ * i.e. √(σ_annual² × T + η²) from the microstructure floor.
+ * We do NOT multiply by √T again.
  */
 export function runMonteCarlo(
   S0: number,
@@ -70,8 +74,9 @@ export function runMonteCarlo(
   const start = performance.now();
   
   const terminalPrices = new Float64Array(numPaths);
-  const drift = (muAdj - 0.5 * sigmaTotal * sigmaTotal) * T;
-  const diffusion = sigmaTotal * Math.sqrt(T);
+  // sigmaTotal is already period-scaled, so drift correction uses sigmaTotal² directly
+  const drift = muAdj * T - 0.5 * sigmaTotal * sigmaTotal;
+  const diffusion = sigmaTotal; // already √(σ²T + η²), do NOT multiply by √T
   
   let countAbove = 0;
   let sum = 0;
@@ -112,7 +117,8 @@ export function runMonteCarlo(
 
 /**
  * Digital Black-Scholes closed-form approximation.
- * d2 = [ln(S₀/K) + (μ_adj − 0.5σ²)T] / (σ√T)
+ * sigmaTotal is already period-scaled: √(σ²T + η²)
+ * d2 = [ln(S₀/K) + μ_adj·T − 0.5·σ_total²] / σ_total
  * P_up ≈ N(d2)
  */
 export function closedFormProbability(
@@ -127,7 +133,8 @@ export function closedFormProbability(
     return { pUp, pDown: 1 - pUp, d2: S0 > K ? Infinity : -Infinity, mode: 'closed-form' };
   }
   
-  const d2 = (Math.log(S0 / K) + (muAdj - 0.5 * sigmaTotal * sigmaTotal) * T) / (sigmaTotal * Math.sqrt(T));
+  // sigmaTotal is already period-scaled, no need to multiply by √T
+  const d2 = (Math.log(S0 / K) + muAdj * T - 0.5 * sigmaTotal * sigmaTotal) / sigmaTotal;
   const pUp = normalCDF(d2);
   
   return { pUp, pDown: 1 - pUp, d2, mode: 'closed-form' };
