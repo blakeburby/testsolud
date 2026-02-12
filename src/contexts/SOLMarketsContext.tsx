@@ -1,8 +1,7 @@
  import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData, PendingOrder } from '@/types/sol-markets';
  import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchKalshiOrderbook } from '@/lib/kalshi-client';
- import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
- import type { KalshiFullMarketResponse } from '@/types/sol-markets';
+import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
  import { useToast } from '@/hooks/use-toast';
  import { useMultiSourcePrice } from '@/hooks/useMultiSourcePrice';
  
@@ -167,7 +166,7 @@ import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData,
        
        // Parse markets into SOLMarket format
        const solMarkets: SOLMarket[] = rawMarkets
-         .map(m => parseKalshiFullMarket(m as unknown as KalshiFullMarketResponse))
+         .map(m => parseKalshiFullMarket(m))
          .filter((m): m is SOLMarket => m !== null);
        
        let timeSlots = groupMarketsIntoTimeSlots(solMarkets);
