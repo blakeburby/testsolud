@@ -1,0 +1,22 @@
+# Never include secrets
+.env
+.env.*
+keys/
+*.pem
+*.key
+
+# Python junk
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Logs and data
+logs/
+data/trades/
+data/backtest/
+*.log
+
+# Tests
+tests/
