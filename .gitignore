@@ -22,3 +22,62 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+env/
+ENV/
+
+# Environment & Secrets - CRITICAL: NEVER COMMIT THESE
+.env
+.env.*
+!.env.example
+!backend/.env.example
+*.pem
+*.key
+*_private_key*
+keys/
+secrets/
+credentials/
+
+# Trading Data & Logs
+backend/logs/
+backend/data/trades/
+backend/data/backtest/
+*.csv
+*.parquet
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
