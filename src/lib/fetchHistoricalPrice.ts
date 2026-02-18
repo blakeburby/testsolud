@@ -1,8 +1,10 @@
 import type { PriceKline } from '@/types/sol-markets';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
 /**
  * Fetch historical SOL/USD 1-minute candles from market window start to now.
- * Tries Binance global first (CORS-enabled), falls back to Kraken, then Coinbase.
+ * Tries backend proxy first (no CORS), then Binance global, then Kraken, then Coinbase.
  * Returns [] on total failure so real-time WebSocket still works.
  */
 export async function fetchHistoricalSOLPrice(
@@ -10,21 +12,45 @@ export async function fetchHistoricalSOLPrice(
   endTime: Date
 ): Promise<PriceKline[]> {
   try {
-    return await fetchFromBinance(startTime, endTime);
+    return await fetchFromBackend(startTime, endTime);
   } catch {
     try {
-      return await fetchFromKraken(startTime, endTime);
+      return await fetchFromBinance(startTime, endTime);
     } catch {
       try {
-        return await fetchFromCoinbase(startTime, endTime);
+        return await fetchFromKraken(startTime, endTime);
       } catch {
-        return [];
+        try {
+          return await fetchFromCoinbase(startTime, endTime);
+        } catch {
+          return [];
+        }
       }
     }
   }
 }
 
-// Primary: Binance global (api.binance.com) — sets Access-Control-Allow-Origin: * on all public endpoints
+// Primary: backend proxy — server-side call, no CORS restrictions
+async function fetchFromBackend(startTime: Date, endTime: Date): Promise<PriceKline[]> {
+  const url = new URL(`${BACKEND_URL}/api/price-history`);
+  url.searchParams.set('startTime', String(startTime.getTime()));
+  url.searchParams.set('endTime', String(endTime.getTime()));
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Backend price-history error ${res.status}`);
+  const data: unknown[][] = await res.json();
+
+  return data.map((k) => ({
+    time: Number(k[0]),
+    open: parseFloat(k[1] as string),
+    high: parseFloat(k[2] as string),
+    low: parseFloat(k[3] as string),
+    close: parseFloat(k[4] as string),
+    volume: parseFloat(k[5] as string),
+  }));
+}
+
+// Fallback 1: Binance global (api.binance.com) — sets Access-Control-Allow-Origin: *
 async function fetchFromBinance(startTime: Date, endTime: Date): Promise<PriceKline[]> {
   const url = new URL('https://api.binance.com/api/v3/klines');
   url.searchParams.set('symbol', 'SOLUSDT');
@@ -47,7 +73,7 @@ async function fetchFromBinance(startTime: Date, endTime: Date): Promise<PriceKl
   }));
 }
 
-// Fallback 1: Kraken public REST (supports browser CORS)
+// Fallback 2: Kraken public REST
 async function fetchFromKraken(startTime: Date, endTime: Date): Promise<PriceKline[]> {
   const since = Math.floor(startTime.getTime() / 1000);
   const url = `https://api.kraken.com/0/public/OHLC?pair=SOLUSD&interval=1&since=${since}`;
@@ -58,7 +84,6 @@ async function fetchFromKraken(startTime: Date, endTime: Date): Promise<PriceKli
 
   if (json.error?.length) throw new Error(json.error[0]);
 
-  // Kraken returns the result under the pair's internal name — try several variants
   const rows: unknown[][] =
     json.result?.SOLUSD ??
     json.result?.XSOLUSD ??
@@ -80,10 +105,10 @@ async function fetchFromKraken(startTime: Date, endTime: Date): Promise<PriceKli
     .filter((k) => k.time <= endMs);
 }
 
-// Fallback 2: Coinbase Exchange public REST (supports browser CORS)
+// Fallback 3: Coinbase Exchange public REST
 async function fetchFromCoinbase(startTime: Date, endTime: Date): Promise<PriceKline[]> {
   const url = new URL('https://api.exchange.coinbase.com/products/SOL-USD/candles');
-  url.searchParams.set('granularity', '60'); // 1-minute candles
+  url.searchParams.set('granularity', '60');
   url.searchParams.set('start', startTime.toISOString());
   url.searchParams.set('end', endTime.toISOString());
 

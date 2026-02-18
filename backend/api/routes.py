@@ -4,11 +4,35 @@ FastAPI REST routes for trading bot control and monitoring.
 from fastapi import APIRouter, HTTPException
 from typing import Dict, List
 from datetime import datetime
+import httpx
 
 from models.trade import Trade
 from models.strategy import StrategySignal
 
 router = APIRouter()
+
+
+@router.get("/price-history")
+async def get_price_history(
+    startTime: int,
+    endTime: int,
+    symbol: str = "SOLUSDT",
+    interval: str = "1m",
+    limit: int = 1000,
+) -> list:
+    """Proxy Binance kline data server-side to avoid browser CORS restrictions."""
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "startTime": str(startTime),
+        "endTime": str(endTime),
+        "limit": str(limit),
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        res = await client.get("https://api.binance.com/api/v3/klines", params=params)
+    if not res.is_success:
+        raise HTTPException(status_code=res.status_code, detail="Upstream price data unavailable")
+    return res.json()
 
 
 @router.get("/health")
