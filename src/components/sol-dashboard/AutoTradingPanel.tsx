@@ -185,24 +185,24 @@ export function AutoTradingPanel() {
       </Card>
 
       {/* Risk Metrics */}
-      {status && (
+      {status?.risk_metrics && (
         <Card className="p-4">
           <h4 className="font-semibold mb-3">Risk Metrics</h4>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <p className="text-sm text-muted-foreground">Positions</p>
-              <p className="text-2xl font-bold">{status.risk_metrics.total_positions}</p>
+              <p className="text-2xl font-bold">{status.risk_metrics.total_positions ?? 0}</p>
             </div>
 
             <div>
               <p className="text-sm text-muted-foreground">Exposure</p>
-              <p className="text-2xl font-bold">${status.risk_metrics.total_exposure.toFixed(0)}</p>
+              <p className="text-2xl font-bold">${(status.risk_metrics.total_exposure ?? 0).toFixed(0)}</p>
             </div>
 
             <div>
               <p className="text-sm text-muted-foreground">Daily P&L</p>
-              <p className={`text-2xl font-bold ${status.risk_metrics.daily_pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                ${status.risk_metrics.daily_pnl >= 0 ? '+' : ''}{status.risk_metrics.daily_pnl.toFixed(2)}
+              <p className={`text-2xl font-bold ${(status.risk_metrics.daily_pnl ?? 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                ${(status.risk_metrics.daily_pnl ?? 0) >= 0 ? '+' : ''}{(status.risk_metrics.daily_pnl ?? 0).toFixed(2)}
               </p>
             </div>
 
@@ -277,7 +277,7 @@ export function AutoTradingPanel() {
       )}
 
       {/* Enabled Strategies */}
-      {status && status.enabled_strategies.length > 0 && (
+      {status?.enabled_strategies && status.enabled_strategies.length > 0 && (
         <Card className="p-4">
           <h4 className="font-semibold mb-3">Active Strategies</h4>
           <div className="flex flex-wrap gap-2">
