@@ -222,25 +222,25 @@ export function AutoTradingPanel() {
       )}
 
       {/* Order Summary */}
-      {status && (
+      {status?.order_summary && (
         <Card className="p-4">
           <h4 className="font-semibold mb-3">Order Summary</h4>
           <div className="grid grid-cols-4 gap-4 text-center">
             <div>
               <p className="text-sm text-muted-foreground">Active</p>
-              <p className="text-xl font-bold">{status.order_summary.active_count}</p>
+              <p className="text-xl font-bold">{status.order_summary.active_count ?? 0}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Filled</p>
-              <p className="text-xl font-bold text-green-500">{status.order_summary.filled_count}</p>
+              <p className="text-xl font-bold text-green-500">{status.order_summary.filled_count ?? 0}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Cancelled</p>
-              <p className="text-xl font-bold text-gray-500">{status.order_summary.cancelled_count}</p>
+              <p className="text-xl font-bold text-gray-500">{status.order_summary.cancelled_count ?? 0}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Total</p>
-              <p className="text-xl font-bold">{status.order_summary.completed_count}</p>
+              <p className="text-xl font-bold">{status.order_summary.completed_count ?? 0}</p>
             </div>
           </div>
         </Card>
