@@ -16,7 +16,7 @@ router = APIRouter()
 async def get_price_history(
     startTime: int,
     endTime: int,
-    symbol: str = "SOLUSDT",
+    symbol: str = "SOLUSD",
     interval: str = "1m",
     limit: int = 1000,
 ) -> list:
@@ -29,7 +29,7 @@ async def get_price_history(
         "limit": str(limit),
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
-        res = await client.get("https://api.binance.com/api/v3/klines", params=params)
+        res = await client.get("https://api.binance.us/api/v3/klines", params=params)
     if not res.is_success:
         raise HTTPException(status_code=res.status_code, detail="Upstream price data unavailable")
     return res.json()
