@@ -71,13 +71,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware (allow dashboard to connect)
+# CORS middleware - restrict to known frontend origins
+# Set CORS_ORIGINS env var as comma-separated list, e.g.:
+#   CORS_ORIGINS=https://testsolud.vercel.app,https://your-custom-domain.com
+import os as _os
+_raw_origins = _os.environ.get("CORS_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+# Fallback: allow localhost in development only
+if not _allowed_origins:
+    _allowed_origins = ["http://localhost:8080", "http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to your dashboard domain
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -140,10 +149,12 @@ if __name__ == "__main__":
     import uvicorn
 
     # Run the server
+    port = int(_os.environ.get("PORT", 8000))
+    is_dev = _os.environ.get("ENVIRONMENT", "production") == "development"
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,  # Auto-reload on code changes (dev only)
+        port=port,
+        reload=is_dev,  # Only reload in development
         log_level="info",
     )
