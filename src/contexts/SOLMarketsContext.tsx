@@ -2,6 +2,7 @@
 import type { SOLMarket, TimeSlot, SOLDashboardState, PriceKline, OrderbookData, PendingOrder } from '@/types/sol-markets';
  import { fetchKalshi15MinMarkets, fetchKalshiMarket, fetchKalshiOrderbook } from '@/lib/kalshi-client';
 import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-market-filter';
+import { fetchHistoricalSOLPrice } from '@/lib/fetchHistoricalPrice';
  import { useToast } from '@/hooks/use-toast';
  import { useMultiSourcePrice } from '@/hooks/useMultiSourcePrice';
  
@@ -29,7 +30,8 @@ import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-mark
    | { type: 'SET_ORDERBOOK_LOADING'; payload: boolean }
    | { type: 'SET_ORDERBOOK_ERROR'; payload: string | null }
    | { type: 'CLEAR_ORDERBOOK' }
-   | { type: 'SET_PENDING_ORDER'; payload: PendingOrder | null };
+   | { type: 'SET_PENDING_ORDER'; payload: PendingOrder | null }
+  | { type: 'PREPEND_HISTORICAL_PRICES'; payload: PriceKline[] };
  
  const initialState: ExtendedDashboardState = {
    currentPrice: null,
@@ -129,6 +131,11 @@ import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-mark
        return { ...state, orderbook: null, orderbookError: null };
     case 'SET_PENDING_ORDER':
       return { ...state, pendingOrder: action.payload };
+    case 'PREPEND_HISTORICAL_PRICES': {
+      const merged = [...action.payload, ...state.priceHistory];
+      const deduped = Array.from(new Map(merged.map(p => [p.time, p])).values());
+      return { ...state, priceHistory: deduped.sort((a, b) => a.time - b.time) };
+    }
      default:
        return state;
    }
@@ -186,6 +193,7 @@ import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-mark
              dispatch({ type: 'SELECT_SLOT', payload: activeSlot });
            }
            lastContractEndRef.current = activeSlot.windowEnd.getTime();
+           fetchAndPrependHistory(activeSlot);
          }
        }
  
@@ -243,9 +251,17 @@ import { groupMarketsIntoTimeSlots, parseKalshiFullMarket } from '@/lib/sol-mark
      }
   }, [discoverMarkets]);
  
+   const fetchAndPrependHistory = useCallback(async (slot: TimeSlot) => {
+     const history = await fetchHistoricalSOLPrice(slot.windowStart, new Date());
+     if (history.length > 0) {
+       dispatch({ type: 'PREPEND_HISTORICAL_PRICES', payload: history });
+     }
+   }, []);
+
    const selectSlot = useCallback((slot: TimeSlot) => {
      dispatch({ type: 'SELECT_SLOT', payload: slot });
-   }, []);
+     fetchAndPrependHistory(slot);
+   }, [fetchAndPrependHistory]);
  
    const selectDirection = useCallback((direction: 'up' | 'down') => {
      dispatch({ type: 'SELECT_DIRECTION', payload: direction });

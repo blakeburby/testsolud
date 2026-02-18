@@ -36,6 +36,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!src/lib/
 lib64/
 parts/
 sdist/
@@ -81,3 +82,4 @@ backend/data/backtest/
 # OS
 .DS_Store
 Thumbs.db
+.vercel
