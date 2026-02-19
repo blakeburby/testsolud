@@ -1,6 +1,6 @@
 {
   "autoCommitEnabled": true,
-  "autoPushEnabled": false,
+  "autoPushEnabled": true,
   "commitMessageTemplate": "Auto-commit: {timestamp} - {files}",
   "excludedPatterns": [
     "*.log",
