@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import NotFound from "./pages/NotFound";
 import SOLTrading from "./pages/SOLTrading";
-import OperatorPage from "./pages/OperatorPage";
 
 const queryClient = new QueryClient();
 
@@ -17,10 +16,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<SOLTrading />} />
-          {/* Operator control dashboard at /operator */}
-          <Route path="/operator" element={<OperatorPage />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
+<Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </TooltipProvider>

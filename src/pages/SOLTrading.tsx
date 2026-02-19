@@ -1,5 +1,5 @@
- import { SOLDashboard } from '@/components/sol-dashboard/SOLDashboard';
- 
- export default function SOLTrading() {
-   return <SOLDashboard />;
- }
+import { UnifiedDashboard } from '@/components/UnifiedDashboard';
+
+export default function SOLTrading() {
+  return <UnifiedDashboard />;
+}
