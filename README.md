@@ -71,3 +71,77 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+
+## Git Auto-Sync Setup
+
+This repository includes an automatic Git sync system that keeps your local changes synchronized with GitHub. This is especially useful when working in Cursor or antigravity development environments.
+
+### Quick Start
+
+**Option 1: Manual Sync**
+```bash
+./scripts/git-auto-sync.sh
+```
+
+**Option 2: Continuous Watching (Recommended)**
+```bash
+./scripts/watch-and-commit.sh
+```
+
+This will automatically commit your changes as you work. Press `Ctrl+C` to stop.
+
+### Features
+
+- ✅ **Automatic Commits** - Changes are automatically committed with descriptive messages
+- ✅ **Safety Checks** - Pre-commit hooks prevent committing sensitive data (.env files, API keys, etc.)
+- ✅ **Configurable** - Adjust settings via `.auto-sync-config.json`
+- ✅ **Cooldown Periods** - Prevents excessive commits with configurable delays
+- ✅ **Optional Auto-Push** - Can automatically push to GitHub (disabled by default for safety)
+
+### Configuration
+
+Edit `.auto-sync-config.json` to customize behavior:
+
+```json
+{
+  "autoCommitEnabled": true,
+  "autoPushEnabled": false,
+  "commitCooldown": 5,
+  "pushCooldown": 60
+}
+```
+
+### Safety Features
+
+The system includes pre-commit hooks that automatically check for:
+- `.env` files (environment variables)
+- API keys and secrets in code
+- Large files (>10MB by default)
+- Private key files (`.pem`, `.key`)
+
+If any safety check fails, the commit is blocked.
+
+### Enabling Auto-Push
+
+⚠️ **Warning:** Auto-push will automatically push commits to GitHub. Only enable if you're comfortable with this.
+
+To enable:
+1. Edit `.auto-sync-config.json` and set `"autoPushEnabled": true`
+2. Or set `GIT_AUTO_PUSH=true` environment variable
+
+### Requirements
+
+For file watching, you need:
+- **macOS**: `brew install fswatch`
+- **Linux**: `sudo apt-get install inotify-tools`
+
+### Documentation
+
+For detailed documentation, see [scripts/README.md](./scripts/README.md)
+
+### Disabling Auto-Sync
+
+To disable:
+1. Set `"autoCommitEnabled": false` in `.auto-sync-config.json`
+2. Or set `GIT_AUTO_COMMIT=false` environment variable
+3. Or stop the file watcher with `Ctrl+C`

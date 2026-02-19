@@ -1,0 +1,21 @@
+{
+  "autoCommitEnabled": true,
+  "autoPushEnabled": false,
+  "commitMessageTemplate": "Auto-commit: {timestamp} - {files}",
+  "excludedPatterns": [
+    "*.log",
+    "*.tmp",
+    ".DS_Store",
+    "node_modules/**",
+    ".git/**"
+  ],
+  "maxCommitSize": 50,
+  "commitCooldown": 5,
+  "pushCooldown": 60,
+  "safetyChecks": {
+    "checkEnvFiles": true,
+    "checkApiKeys": true,
+    "checkLargeFiles": true,
+    "maxFileSize": 10485760
+  }
+}

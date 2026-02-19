@@ -83,3 +83,7 @@ backend/data/backtest/
 .DS_Store
 Thumbs.db
 .vercel
+
+# Auto-sync state files
+.git/.auto-commit-state
+.git/.auto-push-state
