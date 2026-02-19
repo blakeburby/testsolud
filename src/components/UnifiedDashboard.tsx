@@ -7,7 +7,6 @@
  *  [Operator Controls]    — mode, bankroll, risk, orders, strategies, health
  */
 
-import React from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BarChart2, Settings2 } from 'lucide-react';
 
@@ -35,6 +34,7 @@ import { RiskDashboard } from './operator-dashboard/RiskDashboard';
 import { OrderControlPanel } from './operator-dashboard/OrderControlPanel';
 import { StrategyControlPanel } from './operator-dashboard/StrategyControlPanel';
 import { SystemHealthPanel } from './operator-dashboard/SystemHealthPanel';
+import { StrategyExplainer } from './operator-dashboard/StrategyExplainer';
 
 function StatusDot() {
   const { connected, status } = useTradingBotState();
@@ -130,6 +130,7 @@ function DashboardInner() {
               <StrategyControlPanel />
             </div>
             <SystemHealthPanel />
+            <StrategyExplainer />
           </TabsContent>
         </Tabs>
 
