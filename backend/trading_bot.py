@@ -4,6 +4,7 @@ Main trading bot orchestrator.
 import asyncio
 from typing import List, Optional
 from pathlib import Path
+import httpx
 
 from models.config import TradingConfig, StrategyConfig
 from models.market import Market
@@ -166,11 +167,12 @@ class TradingBot:
                 # Use first active market (or prioritize based on volume/liquidity)
                 market = active_markets[0]
 
-                # 4. Get current Solana price (from external source or Kalshi)
-                # For now, infer from market prices
-                current_price = market.strike_price  # Placeholder
-
-                # TODO: Integrate with real-time price feed (Kraken WebSocket, etc.)
+                # 4. Get current Solana spot price from Binance/Kraken
+                current_price = await self._fetch_sol_price()
+                if current_price is None:
+                    logger.warning("Could not fetch SOL price — skipping iteration")
+                    await asyncio.sleep(5)
+                    continue
 
                 # 5. Fetch orderbook
                 try:
@@ -209,7 +211,8 @@ class TradingBot:
                         logger.error(f"Error in strategy {strategy.name}: {e}", exc_info=True)
 
                 # 7. Update price history (rolling 15-minute window)
-                self._update_price_history(current_price)
+                if current_price is not None:
+                    self._update_price_history(current_price)
 
                 # 8. Sleep before next iteration
                 await asyncio.sleep(1)  # Check every second for high-frequency
@@ -222,6 +225,41 @@ class TradingBot:
                 await asyncio.sleep(5)
 
         logger.info("Trading loop exited")
+
+    async def _fetch_sol_price(self) -> Optional[float]:
+        """
+        Fetch current SOL/USD spot price from a public exchange.
+        Tries Binance.US first, falls back to Kraken.
+        No authentication required for either endpoint.
+        """
+        # Primary: Binance.US
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://api.binance.us/api/v3/ticker/price",
+                    params={"symbol": "SOLUSDT"},
+                )
+                if resp.is_success:
+                    return float(resp.json()["price"])
+        except Exception as e:
+            logger.warning(f"Binance SOL price fetch failed: {e}")
+
+        # Fallback: Kraken
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://api.kraken.com/0/public/Ticker",
+                    params={"pair": "SOLUSD"},
+                )
+                if resp.is_success:
+                    data = resp.json()
+                    sol = data.get("result", {}).get("SOLUSD", {})
+                    if "c" in sol:  # 'c' = [last_trade_price, lot_volume]
+                        return float(sol["c"][0])
+        except Exception as e:
+            logger.warning(f"Kraken SOL price fetch failed: {e}")
+
+        return None
 
     def _update_price_history(self, price: float):
         """Update rolling price history."""
