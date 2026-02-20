@@ -14,6 +14,7 @@ from models.config import TradingConfig
 from trading_bot import TradingBot
 from api.routes import router
 from api.websocket import ws_manager
+from api.dependencies import set_bot
 from utils.logger import setup_logger, get_logger
 
 # Load environment variables
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize trading bot
     trading_bot = TradingBot(config)
+    set_bot(trading_bot)
 
     # Auto-start if configured
     if not config.dry_run_mode:

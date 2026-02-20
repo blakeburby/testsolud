@@ -81,7 +81,10 @@ class KalshiClient:
         Use json_data= NOT json= (matches codebase convention).
         """
         await self._rate_limit()
-        headers = self.auth.get_headers(method, path)
+        # Kalshi signs the full path: /trade-api/v2/portfolio/balance
+        # base_url already contains /trade-api/v2, so we strip the host portion only
+        sign_path = "/trade-api/v2" + path
+        headers = self.auth.get_headers(method, sign_path)
         url = f"{self.base_url}{path}"
         self.total_requests += 1
 
