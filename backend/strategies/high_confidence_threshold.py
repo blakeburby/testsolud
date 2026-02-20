@@ -1,19 +1,22 @@
 """
-High-Confidence Threshold Strategy
+High-Confidence Threshold Strategy — YES and NO contracts
 
-A short-duration, high-confidence convexity capture strategy that trades Kalshi
-15-minute YES contracts when simulated probability reaches 90%+ AND there is a
-meaningful edge (4-5%+) over market price.
+Trades Kalshi 15-minute SOL/USD binary markets in BOTH directions when the
+Monte Carlo model reaches ≥95% conviction on one side and the market is
+pricing it meaningfully wrong.
 
-Core Principle: This is NOT a directional bet - it's a distribution pricing bet.
-The edge rests entirely on whether our volatility estimation and drift assumptions
-are more accurate and faster-updating than Kalshi's market participants.
+Entry Conditions (ALL must be met):
+1. Model conviction ≥ 95%  (p_true ≥ 0.95 for YES, ≤ 0.05 for NO)
+2. Edge ≥ 5%               (model_prob − market_price on the chosen side)
+3. Time window: 30 s – 10 min remaining
+4. No volatility spike     (current EWMA vol < 2× recent average)
+5. All risk gates clear
 
-Risk Profile: Asymmetric payoff (risk 90¢ to earn 10¢). Requires high model accuracy
-to overcome the 9:1 loss ratio. Break-even win rate must exceed paid price.
+Sizing: 15% Kelly with hard floor (0.5% bankroll) and hard ceiling (2% bankroll).
+Additional 50% haircut when risk/reward > 5:1.
 """
 import numpy as np
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from scipy.stats import norm
 from datetime import datetime
 
@@ -24,52 +27,55 @@ from models.config import StrategyConfig
 
 
 class HighConfidenceThresholdStrategy(BaseStrategy):
-    """
-    90%+ probability threshold strategy with strict edge requirements.
-
-    Entry Conditions (ALL must be met):
-    1. Model probability ≥ 90%
-    2. Edge ≥ 4-5% (model_prob - market_price)
-    3. Time remaining: 90 seconds - 14 minutes
-    4. No volatility regime clustering
-    5. Direction: YES contracts only
-    """
+    """95%+ conviction threshold strategy — trades both YES and NO contracts."""
 
     def __init__(self, config: StrategyConfig):
         super().__init__(config)
 
-        # Strategy parameters
         params = config.params
 
-        # Probability and edge thresholds
-        self.min_probability = params.get("min_probability_threshold", 0.90)
-        self.min_edge = params.get("min_edge_threshold", 0.05)  # 5% minimum edge
+        # ── Threshold parameters ──────────────────────────────────────────────
+        # For YES: p_true ≥ min_probability
+        # For NO:  p_true ≤ (1 − min_probability)  →  implied NO prob ≥ 95%
+        self.min_probability: float = params.get("min_probability_threshold", 0.95)
+        self.min_edge: float = params.get("min_edge_threshold", 0.05)
 
-        # Time constraints
-        self.min_time_remaining = params.get("min_time_remaining", 90)  # 90 seconds minimum
-        self.max_time_remaining = params.get("max_time_remaining", 14 * 60)  # 14 minutes max
+        # ── Time window ───────────────────────────────────────────────────────
+        self.min_time_remaining: int = params.get("min_time_remaining", 30)    # 30 s
+        self.max_time_remaining: int = params.get("max_time_remaining", 600)   # 10 min
 
-        # Volatility parameters
-        self.vol_lambda = params.get("vol_lambda", 0.94)  # EWMA lambda
-        self.microstructure_floor = params.get("microstructure_floor", 0.0007)  # Vol floor
-        self.min_samples = params.get("min_samples", 5)  # Minimum price samples
+        # ── Volatility parameters ─────────────────────────────────────────────
+        self.vol_lambda: float = params.get("vol_lambda", 0.94)
+        self.microstructure_floor: float = params.get("microstructure_floor", 0.0007)
+        self.min_samples: int = params.get("min_samples", 5)
 
-        # Momentum parameters
-        self.momentum_window = params.get("momentum_window", 60)  # 60 seconds for momentum
+        # ── Momentum ──────────────────────────────────────────────────────────
+        self.momentum_window: int = params.get("momentum_window", 60)
 
-        # Volatility regime detection
-        self.vol_regime_lookback = params.get("vol_regime_lookback", 300)  # 5 minutes
-        self.vol_spike_threshold = params.get("vol_spike_threshold", 2.0)  # 2x average = spike
+        # ── Volatility regime ─────────────────────────────────────────────────
+        self.vol_regime_lookback: int = params.get("vol_regime_lookback", 300)
+        self.vol_spike_threshold: float = params.get("vol_spike_threshold", 2.0)
 
-        # Monte Carlo simulation (optional, can use closed-form if faster)
-        self.use_monte_carlo = params.get("use_monte_carlo", False)
-        self.num_simulations = params.get("num_simulations", 10000)
+        # ── Monte Carlo ───────────────────────────────────────────────────────
+        self.use_monte_carlo: bool = params.get("use_monte_carlo", False)
+        self.num_simulations: int = params.get("num_simulations", 10000)
+
+        # ── Sizing constants ──────────────────────────────────────────────────
+        # Overrides config.kelly_fraction for the 15% rule
+        self.kelly_fraction: float = params.get("kelly_fraction", 0.15)
+        # Hard floor/ceiling as fraction of bankroll
+        self.position_floor_pct: float = params.get("position_floor_pct", 0.005)   # 0.5%
+        self.position_ceiling_pct: float = params.get("position_ceiling_pct", 0.02) # 2%
 
         self.logger.info(
-            f"High-confidence strategy initialized: "
-            f"min_prob={self.min_probability:.1%}, min_edge={self.min_edge:.1%}, "
-            f"time_window=[{self.min_time_remaining}s, {self.max_time_remaining}s]"
+            f"Strategy initialised: min_prob={self.min_probability:.0%}, "
+            f"min_edge={self.min_edge:.0%}, window=[{self.min_time_remaining}s,"
+            f"{self.max_time_remaining}s], kelly={self.kelly_fraction:.0%}"
         )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Main entry point
+    # ──────────────────────────────────────────────────────────────────────────
 
     async def analyze(
         self,
@@ -79,376 +85,314 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
         orderbook: Optional[Orderbook] = None,
     ) -> Optional[StrategySignal]:
         """
-        Analyze market for high-confidence trading opportunities.
+        Evaluate market for a YES or NO signal.
 
-        Strategy Flow:
-        1. Pre-filter: Check market tradability, time window, data availability
-        2. Calculate EWMA volatility with microstructure floor
-        3. Detect volatility regime (skip if clustering)
-        4. Calculate momentum-adjusted drift
-        5. Compute true probability (Monte Carlo or closed-form)
-        6. Check if probability ≥ 90% AND edge ≥ threshold
-        7. Apply asymmetric risk sizing (fractional Kelly)
-        8. Generate signal if all conditions met
+        Flow:
+        1. Pre-filter (tradeable, time window, data)
+        2. EWMA volatility + microstructure floor
+        3. Volatility regime filter
+        4. Momentum drift
+        5. True probability (closed-form or Monte Carlo)
+        6. Check YES signal (p_true ≥ 95%, edge ≥ 5%)
+        7. Check NO signal  (p_true ≤ 5%, edge ≥ 5%)
+        8. Size and return the better signal (or None)
         """
-        # ========================
-        # 1. PRE-FILTERING CHECKS
-        # ========================
+
+        # ── 1. Pre-filter ─────────────────────────────────────────────────────
 
         if not market.is_tradeable:
             return None
 
         time_remaining = market.time_remaining
 
-        # Time window filter (avoid gamma explosion zone and excessive uncertainty)
         if time_remaining < self.min_time_remaining:
             self.logger.debug(
-                f"Skipping {market.ticker}: too close to expiry "
-                f"({time_remaining}s < {self.min_time_remaining}s) - gamma risk too high"
+                f"{market.ticker}: too close to expiry ({time_remaining}s < "
+                f"{self.min_time_remaining}s)"
             )
             return None
 
         if time_remaining > self.max_time_remaining:
             self.logger.debug(
-                f"Skipping {market.ticker}: too far from expiry "
-                f"({time_remaining}s > {self.max_time_remaining}s)"
+                f"{market.ticker}: too far from expiry ({time_remaining}s > "
+                f"{self.max_time_remaining}s)"
             )
             return None
 
-        # Market probability check
-        market_prob = market.yes_price
-        if market_prob is None or market_prob <= 0 or market_prob >= 1:
-            self.logger.warning(f"Invalid market probability: {market_prob}")
+        yes_price = market.yes_price
+        no_price = market.no_price
+        if yes_price is None or yes_price <= 0 or yes_price >= 1:
             return None
+        if no_price is None:
+            no_price = 1.0 - yes_price
 
-        # Data availability check
         if len(price_history) < self.min_samples:
-            self.logger.debug(f"Insufficient price history: {len(price_history)} samples")
             return None
 
-        # ========================
-        # 2. VOLATILITY ESTIMATION
-        # ========================
+        # ── 2. Volatility ─────────────────────────────────────────────────────
 
         volatility = self._calculate_ewma_volatility(price_history)
         if volatility <= 0:
-            self.logger.warning("Invalid volatility calculation")
             return None
 
-        # Apply microstructure floor to prevent false certainty near expiry
         T_years = time_remaining / (365.25 * 24 * 3600)
-        vol_floor = self.microstructure_floor / np.sqrt(T_years) if T_years > 0 else self.microstructure_floor
+        if T_years <= 0:
+            return None
+        vol_floor = self.microstructure_floor / np.sqrt(T_years)
         vol_total = max(volatility, vol_floor)
 
-        # ===========================
-        # 3. VOLATILITY REGIME FILTER
-        # ===========================
+        # ── 3. Vol-spike filter ───────────────────────────────────────────────
 
-        # Skip trades during volatility clustering events
         if self._detect_volatility_spike(price_history):
-            self.logger.info(
-                f"Skipping {market.ticker}: volatility clustering detected - model uncertainty too high"
-            )
+            self.logger.info(f"{market.ticker}: volatility clustering — skipping")
             return None
 
-        # ==========================
-        # 4. MOMENTUM-ADJUSTED DRIFT
-        # ==========================
+        # ── 4. Momentum drift ─────────────────────────────────────────────────
 
         momentum_drift = self._calculate_momentum_drift(price_history, current_price)
 
-        # =========================
-        # 5. PROBABILITY ESTIMATION
-        # =========================
+        # ── 5. True probability ───────────────────────────────────────────────
 
         if self.use_monte_carlo:
             true_prob = self._monte_carlo_probability(
-                S0=current_price,
-                K=market.strike_price,
-                T=T_years,
-                sigma=vol_total,
-                mu=momentum_drift,
+                S0=current_price, K=market.strike_price,
+                T=T_years, sigma=vol_total, mu=momentum_drift,
             )
         else:
-            # Use closed-form Black-Scholes approximation (faster)
             true_prob = self._calculate_probability_closed_form(
-                S0=current_price,
-                K=market.strike_price,
-                T=T_years,
-                sigma=vol_total,
-                mu=momentum_drift,
+                S0=current_price, K=market.strike_price,
+                T=T_years, sigma=vol_total, mu=momentum_drift,
             )
 
-        # ========================
-        # 6. THRESHOLD GATING
-        # ========================
+        # ── 6 & 7. Check YES and NO signals ───────────────────────────────────
 
-        # CRITICAL: Both conditions must be met
-        # 1. Probability must be ≥ 90% (high confidence)
-        # 2. Edge must be ≥ minimum threshold (meaningful mispricing)
+        yes_signal = self._evaluate_yes(
+            true_prob, yes_price, market, time_remaining, vol_total,
+            momentum_drift, current_price, orderbook,
+        )
+        no_signal = self._evaluate_no(
+            true_prob, no_price, market, time_remaining, vol_total,
+            momentum_drift, current_price, orderbook,
+        )
 
+        # Return the signal with larger edge (ties go to YES)
+        if yes_signal and no_signal:
+            return yes_signal if yes_signal.edge >= no_signal.edge else no_signal
+        return yes_signal or no_signal
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Signal evaluation helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _evaluate_yes(
+        self,
+        true_prob: float,
+        yes_price: float,
+        market: Market,
+        time_remaining: int,
+        vol_total: float,
+        momentum_drift: float,
+        current_price: float,
+        orderbook: Optional[Orderbook],
+    ) -> Optional[StrategySignal]:
+        """
+        YES signal: model says ≥95% chance the contract finishes in-the-money.
+        Edge = model_probability − YES_market_price.
+        """
         if true_prob < self.min_probability:
-            self.logger.debug(
-                f"Probability {true_prob:.1%} below threshold {self.min_probability:.1%}"
-            )
             return None
 
-        edge = true_prob - market_prob
-
+        edge = true_prob - yes_price
         if edge < self.min_edge:
-            self.logger.debug(
-                f"Edge {edge:.1%} below minimum {self.min_edge:.1%} "
-                f"(model={true_prob:.1%}, market={market_prob:.1%})"
-            )
             return None
 
-        # ========================
-        # 7. SIGNAL GENERATION
-        # ========================
-
-        # Only trade YES contracts (as specified in strategy requirements)
-        direction = SignalDirection.YES
-
-        # Categorize strength by edge magnitude (above minimum)
-        strength = self._categorize_strength(edge)
-
-        # Position sizing with asymmetric risk awareness
-        # Risk: market_prob (e.g., 90¢), Reward: 1 - market_prob (e.g., 10¢)
-        # Use fractional Kelly to protect against model error
         quantity = self._calculate_position_size(
             edge=edge,
             bankroll=self.config.bankroll,
-            market_price=market_prob,
+            market_price=yes_price,
         )
+        if quantity <= 0:
+            return None
 
-        # Optimal execution price
-        recommended_price = self._get_optimal_price(direction, market, orderbook)
-
-        # Reasoning and metrics
-        reasoning = (
-            f"High-confidence threshold met: model_prob={true_prob:.1%}, "
-            f"market_price={market_prob:.1%}, edge={edge:.1%}, "
-            f"vol={vol_total:.3f}, time={time_remaining/60:.1f}min, "
-            f"momentum_drift={momentum_drift:.4f}"
-        )
-
-        metrics = {
-            "model_probability": true_prob,
-            "market_probability": market_prob,
-            "edge": edge,
-            "volatility": vol_total,
-            "volatility_floor_applied": vol_total == vol_floor,
-            "time_remaining_seconds": time_remaining,
-            "strike_price": market.strike_price,
-            "current_price": current_price,
-            "momentum_drift": momentum_drift,
-            "risk_amount": quantity * market_prob,
-            "reward_potential": quantity * (1 - market_prob),
-            "risk_reward_ratio": market_prob / (1 - market_prob) if market_prob < 1 else float('inf'),
-        }
+        recommended_price = self._get_optimal_price(SignalDirection.YES, market, orderbook)
+        strength = self._categorize_strength(edge)
 
         self.logger.warning(
-            f"🎯 HIGH-CONFIDENCE SIGNAL: {market.ticker} - "
-            f"Prob={true_prob:.1%}, Edge={edge:.1%}, "
-            f"Risk=${quantity * market_prob:.2f} to gain ${quantity * (1 - market_prob):.2f}"
+            f"🎯 YES SIGNAL {market.ticker}: prob={true_prob:.1%} "
+            f"edge={edge:.1%} qty={quantity} price={yes_price:.2f}"
         )
 
         return self._create_signal(
             market=market,
-            direction=direction,
+            direction=SignalDirection.YES,
             strength=strength,
             true_probability=true_prob,
-            market_probability=market_prob,
+            market_probability=yes_price,
             recommended_quantity=quantity,
             recommended_price=recommended_price,
-            reasoning=reasoning,
-            metrics=metrics,
+            reasoning=(
+                f"YES signal: model={true_prob:.1%}, market={yes_price:.1%}, "
+                f"edge={edge:.1%}, vol={vol_total:.3f}, "
+                f"time={time_remaining/60:.1f}min, drift={momentum_drift:.4f}"
+            ),
+            metrics={
+                "direction": "YES",
+                "model_probability": true_prob,
+                "market_probability": yes_price,
+                "edge": edge,
+                "volatility": vol_total,
+                "time_remaining_seconds": time_remaining,
+                "strike_price": market.strike_price,
+                "current_price": current_price,
+                "momentum_drift": momentum_drift,
+                "risk_amount": quantity * yes_price,
+                "reward_potential": quantity * (1 - yes_price),
+                "risk_reward_ratio": yes_price / (1 - yes_price) if yes_price < 1 else float("inf"),
+            },
         )
 
+    def _evaluate_no(
+        self,
+        true_prob: float,
+        no_price: float,
+        market: Market,
+        time_remaining: int,
+        vol_total: float,
+        momentum_drift: float,
+        current_price: float,
+        orderbook: Optional[Orderbook],
+    ) -> Optional[StrategySignal]:
+        """
+        NO signal: model says ≤5% chance the contract finishes YES
+        (i.e., ≥95% chance it finishes NO).
+        Edge = (1 − model_probability) − NO_market_price.
+        """
+        implied_no_prob = 1.0 - true_prob
+        if implied_no_prob < self.min_probability:
+            return None
+
+        edge = implied_no_prob - no_price
+        if edge < self.min_edge:
+            return None
+
+        quantity = self._calculate_position_size(
+            edge=edge,
+            bankroll=self.config.bankroll,
+            market_price=no_price,
+        )
+        if quantity <= 0:
+            return None
+
+        recommended_price = self._get_optimal_price(SignalDirection.NO, market, orderbook)
+        strength = self._categorize_strength(edge)
+
+        self.logger.warning(
+            f"🎯 NO SIGNAL {market.ticker}: implied_no={implied_no_prob:.1%} "
+            f"edge={edge:.1%} qty={quantity} price={no_price:.2f}"
+        )
+
+        return self._create_signal(
+            market=market,
+            direction=SignalDirection.NO,
+            strength=strength,
+            true_probability=implied_no_prob,
+            market_probability=no_price,
+            recommended_quantity=quantity,
+            recommended_price=recommended_price,
+            reasoning=(
+                f"NO signal: implied_no={implied_no_prob:.1%}, market={no_price:.1%}, "
+                f"edge={edge:.1%}, vol={vol_total:.3f}, "
+                f"time={time_remaining/60:.1f}min, drift={momentum_drift:.4f}"
+            ),
+            metrics={
+                "direction": "NO",
+                "model_probability": implied_no_prob,
+                "market_probability": no_price,
+                "edge": edge,
+                "volatility": vol_total,
+                "time_remaining_seconds": time_remaining,
+                "strike_price": market.strike_price,
+                "current_price": current_price,
+                "momentum_drift": momentum_drift,
+                "risk_amount": quantity * no_price,
+                "reward_potential": quantity * (1 - no_price),
+                "risk_reward_ratio": no_price / (1 - no_price) if no_price < 1 else float("inf"),
+            },
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Quant helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
     def _calculate_ewma_volatility(self, price_history: List[dict]) -> float:
-        """
-        Calculate EWMA volatility from price history.
-
-        Uses exponentially weighted moving average to give more weight to recent
-        price movements while maintaining statistical validity.
-
-        Returns: Annualized volatility
-        """
         if len(price_history) < 2:
-            return 0
-
-        # Sort by timestamp
-        sorted_prices = sorted(price_history, key=lambda p: p.get('time', p.get('timestamp', 0)))
-
-        # Calculate log returns
-        prices = np.array([p['price'] for p in sorted_prices])
+            return 0.0
+        sorted_prices = sorted(price_history, key=lambda p: p.get("time", p.get("timestamp", 0)))
+        prices = np.array([p["price"] for p in sorted_prices])
         log_returns = np.diff(np.log(prices))
-
         if len(log_returns) == 0:
-            return 0
-
-        # EWMA variance (weight recent data more heavily)
-        variance = 0
-        for r in log_returns[::-1]:  # Reverse to weight recent more
-            variance = self.vol_lambda * variance + (1 - self.vol_lambda) * r**2
-
-        # Annualize (assuming 1-second intervals for high-frequency data)
-        annual_variance = variance * 31557600  # seconds per year
-        annual_vol = np.sqrt(annual_variance)
-
-        return annual_vol
+            return 0.0
+        variance = 0.0
+        for r in log_returns[::-1]:
+            variance = self.vol_lambda * variance + (1 - self.vol_lambda) * r ** 2
+        return float(np.sqrt(variance * 31_557_600))  # annualised
 
     def _calculate_momentum_drift(self, price_history: List[dict], current_price: float) -> float:
-        """
-        Calculate momentum-adjusted drift over recent window.
-
-        Captures short-term directional flow to improve probability estimates
-        during trending price action.
-
-        Returns: Annualized drift estimate
-        """
         if len(price_history) < 2:
             return 0.0
-
-        # Get recent prices within momentum window
-        now = max(p.get('time', p.get('timestamp', 0)) for p in price_history)
-        cutoff = now - (self.momentum_window * 1000)  # Convert to milliseconds
-
-        recent = [p for p in price_history if p.get('time', p.get('timestamp', 0)) >= cutoff]
-
+        now = max(p.get("time", p.get("timestamp", 0)) for p in price_history)
+        cutoff = now - self.momentum_window * 1000
+        recent = [p for p in price_history if p.get("time", p.get("timestamp", 0)) >= cutoff]
         if len(recent) < 2:
             return 0.0
-
-        # Calculate average log return
-        sorted_prices = sorted(recent, key=lambda p: p.get('time', p.get('timestamp', 0)))
-        prices = np.array([p['price'] for p in sorted_prices])
+        sorted_recent = sorted(recent, key=lambda p: p.get("time", p.get("timestamp", 0)))
+        prices = np.array([p["price"] for p in sorted_recent])
         log_returns = np.diff(np.log(prices))
-
-        # Average return (annualized)
-        avg_return = np.mean(log_returns)
-        annual_drift = avg_return * 31557600  # Annualize
-
-        return annual_drift
+        return float(np.mean(log_returns) * 31_557_600)  # annualised
 
     def _detect_volatility_spike(self, price_history: List[dict]) -> bool:
-        """
-        Detect volatility clustering/regime shifts.
-
-        Returns True if current volatility is significantly elevated relative
-        to recent average, indicating model uncertainty is too high.
-        """
-        if len(price_history) < 20:  # Need sufficient data
+        if len(price_history) < 20:
             return False
-
-        # Get volatility regime lookback window
-        now = max(p.get('time', p.get('timestamp', 0)) for p in price_history)
-        cutoff = now - (self.vol_regime_lookback * 1000)
-
-        recent = [p for p in price_history if p.get('time', p.get('timestamp', 0)) >= cutoff]
-
+        now = max(p.get("time", p.get("timestamp", 0)) for p in price_history)
+        cutoff = now - self.vol_regime_lookback * 1000
+        recent = [p for p in price_history if p.get("time", p.get("timestamp", 0)) >= cutoff]
         if len(recent) < 10:
             return False
-
-        # Calculate rolling realized volatility
-        sorted_prices = sorted(recent, key=lambda p: p.get('time', p.get('timestamp', 0)))
-        prices = np.array([p['price'] for p in sorted_prices])
+        sorted_prices = sorted(recent, key=lambda p: p.get("time", p.get("timestamp", 0)))
+        prices = np.array([p["price"] for p in sorted_prices])
         log_returns = np.diff(np.log(prices))
-
         if len(log_returns) < 5:
             return False
-
-        # Current volatility (last 20% of data)
-        split_point = int(len(log_returns) * 0.8)
-        recent_vol = np.std(log_returns[split_point:])
-
-        # Historical average
-        historical_vol = np.std(log_returns[:split_point])
-
-        # Detect spike
-        if historical_vol > 0:
-            vol_ratio = recent_vol / historical_vol
-            if vol_ratio > self.vol_spike_threshold:
-                self.logger.debug(
-                    f"Volatility spike detected: current={recent_vol:.4f}, "
-                    f"historical={historical_vol:.4f}, ratio={vol_ratio:.2f}x"
-                )
-                return True
-
+        split = int(len(log_returns) * 0.8)
+        recent_vol = np.std(log_returns[split:])
+        hist_vol = np.std(log_returns[:split])
+        if hist_vol > 0 and recent_vol / hist_vol > self.vol_spike_threshold:
+            return True
         return False
 
     def _calculate_probability_closed_form(
-        self,
-        S0: float,
-        K: float,
-        T: float,
-        sigma: float,
-        mu: float = 0.0,
+        self, S0: float, K: float, T: float, sigma: float, mu: float = 0.0
     ) -> float:
-        """
-        Calculate P(S_T > K) using Black-Scholes framework (closed-form).
-
-        Faster than Monte Carlo for real-time trading. Assumes geometric
-        Brownian motion with drift.
-
-        Returns: Probability that terminal price exceeds strike
-        """
         if T <= 0 or sigma <= 0 or S0 <= 0 or K <= 0:
             return 0.5
-
-        # Standard Black-Scholes d2 formula
-        d = (np.log(S0 / K) + (mu - 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-
-        # P(S_T > K) = N(d)
-        prob = norm.cdf(d)
-
-        # Clamp to valid range
-        return max(0.001, min(0.999, prob))
+        d = (np.log(S0 / K) + (mu - 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        return float(max(0.001, min(0.999, norm.cdf(d))))
 
     def _monte_carlo_probability(
-        self,
-        S0: float,
-        K: float,
-        T: float,
-        sigma: float,
-        mu: float = 0.0,
+        self, S0: float, K: float, T: float, sigma: float, mu: float = 0.0
     ) -> float:
-        """
-        Calculate P(S_T > K) using Monte Carlo simulation.
-
-        More flexible than closed-form if we want to add path-dependent features,
-        but slower for real-time execution.
-
-        Returns: Simulated probability that terminal price exceeds strike
-        """
         if T <= 0 or sigma <= 0 or S0 <= 0 or K <= 0:
             return 0.5
-
-        # Generate random paths
-        dt = T
         Z = np.random.standard_normal(self.num_simulations)
-
-        # Geometric Brownian Motion: S_T = S_0 * exp((mu - sigma^2/2)*T + sigma*sqrt(T)*Z)
-        S_T = S0 * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
-
-        # Count paths that finish above strike
-        prob = np.mean(S_T > K)
-
-        # Clamp to valid range
-        return max(0.001, min(0.999, prob))
+        S_T = S0 * np.exp((mu - 0.5 * sigma ** 2) * T + sigma * np.sqrt(T) * Z)
+        return float(max(0.001, min(0.999, np.mean(S_T > K))))
 
     def _categorize_strength(self, edge: float) -> SignalStrength:
-        """
-        Categorize signal strength based on edge magnitude.
-
-        Since we're already filtering for min_edge (typically 5%), these categories
-        represent degrees of mispricing above that threshold.
-        """
-        if edge >= 0.10:  # 10%+ edge (extreme mispricing)
+        if edge >= 0.10:
             return SignalStrength.HIGH
-        elif edge >= 0.07:  # 7-10% edge (strong mispricing)
+        elif edge >= 0.07:
             return SignalStrength.MEDIUM
-        else:  # 5-7% edge (moderate mispricing above threshold)
-            return SignalStrength.LOW
+        return SignalStrength.LOW
 
     def _calculate_position_size(
         self,
@@ -457,42 +401,39 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
         market_price: float,
     ) -> int:
         """
-        Calculate position size using fractional Kelly with asymmetric risk adjustment.
+        15% Kelly with asymmetric haircut, hard floor, and hard ceiling.
 
-        For high-confidence (e.g., 90%+ prob), we risk ~90¢ to gain ~10¢.
-        This asymmetry requires more conservative sizing than symmetric bets.
-
-        Kelly formula for binary markets: f = edge / price
-        We apply fractional Kelly (1/4 or less) to protect against model error.
+        Full Kelly  = edge / market_price
+        Applied     = full_kelly * 0.15
+        If R/R > 5:1 → additional 50% haircut → effective ~7.5% Kelly
+        Floor       = 0.5% of bankroll
+        Ceiling     = 2.0% of bankroll
         """
         if edge <= 0 or market_price <= 0 or market_price >= 1:
             return 0
 
-        # Full Kelly fraction
-        kelly_fraction = edge / market_price
+        full_kelly = edge / market_price
+        adjusted = full_kelly * self.kelly_fraction  # 15%
 
-        # Apply fractional Kelly (default 0.25 = quarter Kelly)
-        # For asymmetric payoffs, we may want even more conservative (e.g., 0.1 Kelly)
-        adjusted_fraction = kelly_fraction * self.config.kelly_fraction
+        # Asymmetric payoff haircut (risk/reward > 5:1)
+        risk_reward = market_price / (1 - market_price)
+        if risk_reward > 5.0:
+            adjusted *= 0.5
+            self.logger.debug(f"Asymmetric haircut applied: R/R={risk_reward:.1f}x")
 
-        # Asymmetric risk adjustment: if risk/reward > 5:1, reduce size further
-        risk_reward_ratio = market_price / (1 - market_price)
-        if risk_reward_ratio > 5.0:
-            # Apply additional haircut for extreme asymmetry
-            asymmetry_factor = 0.5  # Reduce by half
-            adjusted_fraction *= asymmetry_factor
-            self.logger.debug(
-                f"Asymmetric risk adjustment applied: R/R={risk_reward_ratio:.1f}, "
-                f"reducing position size by {asymmetry_factor:.1%}"
-            )
+        # Dollar allocation
+        dollar_allocation = bankroll * adjusted
 
-        # Convert to dollar amount
-        position_value = bankroll * adjusted_fraction
+        # Hard floor: 0.5% of bankroll
+        floor_dollars = bankroll * self.position_floor_pct
+        dollar_allocation = max(dollar_allocation, floor_dollars)
 
-        # Convert to number of contracts
-        quantity = int(position_value / market_price)
+        # Hard ceiling: 2% of bankroll
+        ceiling_dollars = bankroll * self.position_ceiling_pct
+        dollar_allocation = min(dollar_allocation, ceiling_dollars)
 
-        return max(1, quantity)  # At least 1 contract
+        quantity = int(dollar_allocation / market_price)
+        return max(1, quantity)
 
     def _get_optimal_price(
         self,
@@ -500,25 +441,15 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
         market: Market,
         orderbook: Optional[Orderbook],
     ) -> Optional[float]:
-        """
-        Get optimal limit price from orderbook.
-
-        For high-probability trades, we can afford to be slightly more aggressive
-        on price since our edge is structural (probability distribution) not fleeting.
-
-        Strategy: Try to improve on current ask by 1 tick, but willing to pay market.
-        """
         if not orderbook:
             return market.yes_price if direction == SignalDirection.YES else market.no_price
-
         if direction == SignalDirection.YES:
-            best_ask = orderbook.best_yes_ask
-            if best_ask:
-                # Try to improve by 1 cent, but don't go below 1 cent
-                return max(0.01, best_ask - 0.01)
+            ask = orderbook.best_yes_ask
+            if ask is not None:
+                return max(0.01, ask - 0.01)
             return market.yes_price
         else:
-            best_ask = orderbook.best_no_ask
-            if best_ask:
-                return max(0.01, best_ask - 0.01)
+            ask = orderbook.best_no_ask
+            if ask is not None:
+                return max(0.01, ask - 0.01)
             return market.no_price

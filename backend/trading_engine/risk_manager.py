@@ -1,14 +1,22 @@
 """
 Risk management system — position limits, circuit breakers, drawdown tracking.
 
-Design principles:
-- Fail closed: if in doubt, block the trade
-- Circuit breaker is latching (requires manual reset or new day)
-- All dollar amounts stored as floats in 0+ range (not cents)
-- Drawdown is relative to peak equity since session start
+Three-layer circuit breakers (all latching, require manual reset):
+  Layer 1 – Daily loss:    ≥ 5% of bankroll (resets UTC midnight)
+  Layer 2 – Weekly drawdown: ≥ 10% from Monday 00:00 UTC equity (resets Monday)
+  Layer 3 – Session drawdown: ≥ 15% from session-start peak (never auto-resets)
+
+Seven risk gates (checked in order — fail-closed):
+  1. Circuit breaker already triggered
+  2. Trade value > 2% of bankroll (ceiling)
+  3. Concurrent positions already at max (5)
+  4. Daily realized loss ≥ 5% of bankroll
+  5. Weekly drawdown ≥ 10% of bankroll
+  6. Total portfolio exposure would exceed configured limit
+  7. Already have an open position in this specific market
 """
 from typing import List, Optional, Dict, Tuple
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from dataclasses import dataclass, field
 
 from models.trade import Trade, TradeStatus, Position
@@ -35,7 +43,8 @@ class RiskMetrics:
 
     # Risk ratios
     max_drawdown: float = 0.0               # Fraction (e.g. 0.05 = 5%)
-    current_drawdown: float = 0.0           # Live drawdown fraction
+    current_drawdown: float = 0.0           # Session drawdown fraction
+    weekly_drawdown: float = 0.0            # Rolling weekly drawdown fraction
     win_rate: float = 0.0                   # Fraction of profitable closed trades
     ev_per_trade: float = 0.0              # Average P&L per closed trade (dollars)
 
@@ -66,6 +75,7 @@ class RiskMetrics:
             "realized_pnl": _r2(self.realized_pnl),
             "max_drawdown": _r4(self.max_drawdown),
             "current_drawdown": _r4(self.current_drawdown),
+            "weekly_drawdown": _r4(self.weekly_drawdown),
             "win_rate": _r4(self.win_rate),
             "ev_per_trade": _r4(self.ev_per_trade),
             "circuit_breaker_triggered": self.circuit_breaker_triggered,
@@ -78,8 +88,8 @@ class RiskMetrics:
 class RiskManager:
     """
     Validates new trades against configurable limits.
-    Tracks positions, P&L, drawdown, and win rate.
-    Triggers a latching circuit breaker on breached thresholds.
+    Tracks positions, P&L, and three independent drawdown windows.
+    Triggers latching circuit breakers on any threshold breach.
     """
 
     def __init__(self, config: RiskConfig, bankroll: float = 10_000.0):
@@ -90,15 +100,20 @@ class RiskManager:
         self.all_trades: List[Trade] = []
         self.positions: Dict[str, Position] = {}   # ticker → Position
 
-        # Daily tracking — resets at UTC midnight
+        # ── Daily tracking (resets at UTC midnight) ─────────────────────────
         self._daily_date: date = datetime.utcnow().date()
         self._daily_realized_pnl: float = 0.0
 
-        # Peak equity for drawdown
-        self.peak_equity: float = bankroll
-        self.starting_equity: float = bankroll
+        # ── Weekly tracking (resets every Monday 00:00 UTC) ─────────────────
+        self._weekly_start_date: date = self._current_week_monday()
+        self._weekly_start_equity: float = bankroll
+        self._weekly_peak_equity: float = bankroll
 
-        # Circuit breaker — latching
+        # ── Session tracking (never auto-resets) ────────────────────────────
+        self._session_start_equity: float = bankroll
+        self._session_peak_equity: float = bankroll
+
+        # Circuit breaker — latching, requires explicit reset
         self.circuit_breaker_active: bool = False
         self.circuit_breaker_triggered_at: Optional[datetime] = None
         self.circuit_breaker_reason: str = ""
@@ -109,7 +124,7 @@ class RiskManager:
         logger.info(f"RiskManager initialized (bankroll=${bankroll:,.2f})")
 
     # ──────────────────────────────────────────────────────────────────
-    # Trade gate
+    # Seven-gate trade guard
     # ──────────────────────────────────────────────────────────────────
 
     def check_trade_allowed(
@@ -119,49 +134,62 @@ class RiskManager:
         price: float,
     ) -> Tuple[bool, Optional[str]]:
         """
-        Return (True, None) if trade is allowed, (False, reason) otherwise.
-        Checks every limit in priority order.
+        Return (True, None) if the trade passes all seven gates.
+        Return (False, reason) at the first failed gate.
         """
         self._maybe_reset_daily()
+        self._maybe_reset_weekly()
 
-        # 1. Circuit breaker — always first
+        position_value = quantity * price
+
+        # Gate 1 — Circuit breaker (latching)
         if self.circuit_breaker_active:
             return False, f"Circuit breaker active: {self.circuit_breaker_reason}"
 
-        # 2. Position size
-        position_value = quantity * price
-        if position_value > self.config.max_position_size:
+        # Gate 2 — Position ceiling: 2% of bankroll
+        ceiling = self.bankroll * self.config.position_ceiling_pct
+        if position_value > ceiling:
             return False, (
-                f"Position ${position_value:.2f} exceeds limit ${self.config.max_position_size:.2f}"
+                f"Position ${position_value:.2f} exceeds 2% bankroll ceiling ${ceiling:.2f}"
             )
 
-        # 3. Concurrent positions
+        # Gate 3 — Concurrent positions
         if len(self.positions) >= self.config.max_concurrent_positions:
             return False, (
                 f"Max concurrent positions ({self.config.max_concurrent_positions}) reached"
             )
 
-        # 4. Daily loss cap
-        if abs(self._daily_realized_pnl) >= self.config.max_daily_loss and self._daily_realized_pnl < 0:
+        # Gate 4 — Daily loss cap: 5% of bankroll
+        daily_loss_cap = self.bankroll * self.config.circuit_breaker_loss_threshold
+        if self._daily_realized_pnl < 0 and abs(self._daily_realized_pnl) >= daily_loss_cap:
             return False, (
                 f"Daily loss ${abs(self._daily_realized_pnl):.2f} "
-                f"exceeds cap ${self.config.max_daily_loss:.2f}"
+                f"≥ daily cap ${daily_loss_cap:.2f} "
+                f"({self.config.circuit_breaker_loss_threshold:.0%} of bankroll)"
             )
 
-        # 5. Total exposure
+        # Gate 5 — Weekly drawdown cap: 10% of bankroll
+        weekly_drawdown = self._compute_weekly_drawdown()
+        weekly_cap = self.config.weekly_drawdown_cap
+        if weekly_drawdown >= weekly_cap:
+            return False, (
+                f"Weekly drawdown {weekly_drawdown:.1%} ≥ cap {weekly_cap:.0%}"
+            )
+
+        # Gate 6 — Total portfolio exposure
         current_exposure = sum(
             pos.quantity * pos.average_entry_price for pos in self.positions.values()
         )
-        max_exposure = self.config.max_position_size * self.config.max_concurrent_positions
+        max_exposure = ceiling * self.config.max_concurrent_positions
         if current_exposure + position_value > max_exposure:
             return False, (
-                f"Adding this trade would push total exposure ${current_exposure + position_value:.2f} "
-                f"above limit ${max_exposure:.2f}"
+                f"Total exposure ${current_exposure + position_value:.2f} "
+                f"would exceed limit ${max_exposure:.2f}"
             )
 
-        # 6. Per-market cap: max 1 position per market ticker
+        # Gate 7 — Per-market duplicate
         if ticker in self.positions:
-            return False, f"Already have a position in {ticker}"
+            return False, f"Already have an open position in {ticker}"
 
         return True, None
 
@@ -187,11 +215,11 @@ class RiskManager:
     def record_trade(self, trade: Trade):
         """Record a trade; update positions and metrics."""
         self._maybe_reset_daily()
+        self._maybe_reset_weekly()
         self.all_trades.append(trade)
 
         if trade.status in (TradeStatus.FILLED, TradeStatus.PARTIALLY_FILLED):
             self._update_position_from_fill(trade)
-            # Accumulate realized P&L for today
             if trade.pnl is not None:
                 self._daily_realized_pnl += trade.pnl
 
@@ -229,7 +257,6 @@ class RiskManager:
         else:
             pos = self.positions[ticker]
             total_qty = pos.quantity + qty
-            # Weighted average entry
             pos.average_entry_price = (
                 (pos.average_entry_price * pos.quantity + avg_price * qty) / total_qty
             )
@@ -274,14 +301,17 @@ class RiskManager:
         daily_pnl = self._daily_realized_pnl + unrealized
         daily_loss = min(0.0, daily_pnl)
 
-        # Drawdown
-        current_equity = self.starting_equity + daily_pnl
-        if current_equity > self.peak_equity:
-            self.peak_equity = current_equity
-        current_drawdown = (
-            (self.peak_equity - current_equity) / self.peak_equity
-            if self.peak_equity > 0 else 0.0
+        # Session drawdown
+        current_equity = self._session_start_equity + daily_pnl
+        if current_equity > self._session_peak_equity:
+            self._session_peak_equity = current_equity
+        session_drawdown = (
+            (self._session_peak_equity - current_equity) / self._session_peak_equity
+            if self._session_peak_equity > 0 else 0.0
         )
+
+        # Weekly drawdown
+        weekly_drawdown = self._compute_weekly_drawdown()
 
         # Win rate and EV from closed filled trades
         closed_filled = [
@@ -298,14 +328,15 @@ class RiskManager:
 
         self.metrics = RiskMetrics(
             total_positions=len(self.positions),
-            open_orders_count=self.metrics.open_orders_count,   # preserved from last set
+            open_orders_count=self.metrics.open_orders_count,
             total_exposure=total_exposure,
             daily_pnl=daily_pnl,
             daily_loss=daily_loss,
             unrealized_pnl=unrealized,
             realized_pnl=self._daily_realized_pnl,
-            max_drawdown=max(getattr(self.metrics, "max_drawdown", 0.0), current_drawdown),
-            current_drawdown=current_drawdown,
+            max_drawdown=max(getattr(self.metrics, "max_drawdown", 0.0), session_drawdown),
+            current_drawdown=session_drawdown,
+            weekly_drawdown=weekly_drawdown,
             win_rate=win_rate,
             ev_per_trade=ev_per_trade,
             circuit_breaker_triggered=self.circuit_breaker_active,
@@ -314,28 +345,40 @@ class RiskManager:
             last_updated=now,
         )
 
-        # Check circuit breakers after updating metrics
+        # Check all three circuit-breaker layers
         self._check_circuit_breakers()
 
     def _check_circuit_breakers(self):
-        """Auto-trigger circuit breaker when limits are breached."""
+        """
+        Auto-trigger the latching circuit breaker when any of the three
+        thresholds is breached.  Once triggered, only explicit reset clears it.
+        """
         if self.circuit_breaker_active:
             return
 
-        # Daily loss threshold (% of starting equity)
-        if self.starting_equity > 0:
-            loss_pct = abs(self.metrics.daily_loss) / self.starting_equity
-            if loss_pct >= self.config.circuit_breaker_loss_threshold:
+        # Layer 1 — Daily loss ≥ 5% of bankroll
+        if self.bankroll > 0:
+            daily_loss_pct = abs(self.metrics.daily_loss) / self.bankroll
+            threshold = self.config.circuit_breaker_loss_threshold
+            if self.metrics.daily_loss < 0 and daily_loss_pct >= threshold:
                 self.trigger_circuit_breaker(
-                    f"Daily loss {loss_pct:.1%} ≥ threshold {self.config.circuit_breaker_loss_threshold:.1%}"
+                    f"Layer-1 daily loss {daily_loss_pct:.1%} ≥ {threshold:.0%} of bankroll"
                 )
                 return
 
-        # Drawdown threshold
+        # Layer 2 — Weekly drawdown ≥ 10% of bankroll
+        if self.metrics.weekly_drawdown >= self.config.weekly_drawdown_cap:
+            self.trigger_circuit_breaker(
+                f"Layer-2 weekly drawdown {self.metrics.weekly_drawdown:.1%} "
+                f"≥ {self.config.weekly_drawdown_cap:.0%}"
+            )
+            return
+
+        # Layer 3 — Session drawdown ≥ 15% from session peak
         if self.metrics.current_drawdown >= self.config.circuit_breaker_drawdown_threshold:
             self.trigger_circuit_breaker(
-                f"Drawdown {self.metrics.current_drawdown:.1%} ≥ threshold "
-                f"{self.config.circuit_breaker_drawdown_threshold:.1%}"
+                f"Layer-3 session drawdown {self.metrics.current_drawdown:.1%} "
+                f"≥ {self.config.circuit_breaker_drawdown_threshold:.0%}"
             )
 
     # ──────────────────────────────────────────────────────────────────
@@ -363,11 +406,30 @@ class RiskManager:
             logger.warning("Circuit breaker manually reset by operator")
 
     # ──────────────────────────────────────────────────────────────────
-    # Daily reset
+    # Periodic resets
     # ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _current_week_monday() -> date:
+        """Return the Monday of the current ISO week (UTC)."""
+        today = datetime.utcnow().date()
+        return today - timedelta(days=today.weekday())
+
+    def _compute_weekly_drawdown(self) -> float:
+        """Drawdown fraction from weekly-start equity."""
+        if self._weekly_peak_equity <= 0:
+            return 0.0
+        current_equity = self._session_start_equity + self._daily_realized_pnl
+        # Update weekly peak
+        if current_equity > self._weekly_peak_equity:
+            self._weekly_peak_equity = current_equity
+        return max(
+            0.0,
+            (self._weekly_peak_equity - current_equity) / self._weekly_peak_equity,
+        )
+
     def _maybe_reset_daily(self):
-        """Reset daily accumulators at UTC midnight."""
+        """Reset daily accumulators at UTC midnight. Layer-1 circuit breaker auto-clears."""
         today = datetime.utcnow().date()
         if today > self._daily_date:
             logger.info(
@@ -376,9 +438,23 @@ class RiskManager:
             )
             self._daily_date = today
             self._daily_realized_pnl = 0.0
-            self.starting_equity = self.peak_equity
-            # Auto-reset circuit breaker on new day
-            if self.circuit_breaker_active:
+            # Auto-reset only if the daily-loss breaker was the trigger
+            if self.circuit_breaker_active and "Layer-1" in self.circuit_breaker_reason:
+                self.reset_circuit_breaker()
+
+    def _maybe_reset_weekly(self):
+        """Reset weekly accumulators at Monday 00:00 UTC. Layer-2 circuit breaker auto-clears."""
+        monday = self._current_week_monday()
+        if monday > self._weekly_start_date:
+            logger.info(
+                f"Week rollover: resetting weekly drawdown tracking "
+                f"(weekly start equity ${self._weekly_start_equity:,.2f})"
+            )
+            self._weekly_start_date = monday
+            self._weekly_start_equity = self._session_start_equity + self._daily_realized_pnl
+            self._weekly_peak_equity = self._weekly_start_equity
+            # Auto-reset only if the weekly-drawdown breaker was the trigger
+            if self.circuit_breaker_active and "Layer-2" in self.circuit_breaker_reason:
                 self.reset_circuit_breaker()
 
     # ──────────────────────────────────────────────────────────────────

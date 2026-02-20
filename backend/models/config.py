@@ -8,11 +8,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class RiskConfig(BaseModel):
     """Risk management configuration."""
-    max_position_size: float = Field(default=1000, gt=0, description="Maximum position size in dollars")
-    max_daily_loss: float = Field(default=500, gt=0, description="Maximum daily loss in dollars")
+    max_position_size: float = Field(default=1000, gt=0, description="Legacy dollar cap (superseded by position_ceiling_pct)")
+    max_daily_loss: float = Field(default=500, gt=0, description="Legacy dollar daily-loss cap (superseded by circuit_breaker_loss_threshold)")
     max_concurrent_positions: int = Field(default=5, ge=1, description="Maximum number of concurrent positions")
-    circuit_breaker_loss_threshold: float = Field(default=0.20, gt=0, lt=1, description="Loss threshold to trigger circuit breaker")
-    circuit_breaker_drawdown_threshold: float = Field(default=0.15, gt=0, lt=1, description="Drawdown threshold to trigger circuit breaker")
+
+    # Layer 1 — daily loss as fraction of bankroll (resets UTC midnight)
+    circuit_breaker_loss_threshold: float = Field(default=0.05, gt=0, lt=1, description="Daily loss % of bankroll to trigger Layer-1 circuit breaker")
+    # Layer 2 — rolling weekly drawdown from Monday 00:00 UTC (resets weekly)
+    weekly_drawdown_cap: float = Field(default=0.10, gt=0, lt=1, description="Weekly drawdown % of bankroll to trigger Layer-2 circuit breaker")
+    # Layer 3 — session drawdown from peak (never auto-resets)
+    circuit_breaker_drawdown_threshold: float = Field(default=0.15, gt=0, lt=1, description="Session drawdown % from peak to trigger Layer-3 circuit breaker")
+
+    # Position sizing ceiling: 2% of bankroll per trade (7 gates)
+    position_ceiling_pct: float = Field(default=0.02, gt=0, lt=1, description="Max position size as fraction of bankroll (Gate 2)")
+
     min_edge_threshold: float = Field(default=0.02, ge=0, description="Minimum edge required to trade")
     uncertainty_buffer: float = Field(default=0.03, ge=0, description="Buffer for model uncertainty")
 
@@ -54,7 +63,9 @@ class TradingConfig(BaseSettings):
     max_daily_loss: Optional[float] = None
     max_concurrent_positions: Optional[int] = None
     circuit_breaker_loss_threshold: Optional[float] = None
+    weekly_drawdown_cap: Optional[float] = None
     circuit_breaker_drawdown_threshold: Optional[float] = None
+    position_ceiling_pct: Optional[float] = None
     min_edge_threshold: Optional[float] = None
     uncertainty_buffer: Optional[float] = None
 
@@ -91,8 +102,10 @@ class TradingConfig(BaseSettings):
             max_position_size=self.max_position_size or 1000,
             max_daily_loss=self.max_daily_loss or 500,
             max_concurrent_positions=self.max_concurrent_positions or 5,
-            circuit_breaker_loss_threshold=self.circuit_breaker_loss_threshold or 0.20,
+            circuit_breaker_loss_threshold=self.circuit_breaker_loss_threshold or 0.05,
+            weekly_drawdown_cap=self.weekly_drawdown_cap or 0.10,
             circuit_breaker_drawdown_threshold=self.circuit_breaker_drawdown_threshold or 0.15,
+            position_ceiling_pct=self.position_ceiling_pct or 0.02,
             min_edge_threshold=self.min_edge_threshold or 0.02,
             uncertainty_buffer=self.uncertainty_buffer or 0.03,
         )
