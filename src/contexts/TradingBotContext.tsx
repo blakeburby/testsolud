@@ -169,7 +169,7 @@ const TradingBotActionsCtx = createContext<TradingBotActions | null>(null);
 // Config
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://testsolud-v1-production.up.railway.app';
 const API = `${BACKEND_URL}/api`;
 const WS_URL = BACKEND_URL.replace(/^https?/, BACKEND_URL.startsWith('https') ? 'wss' : 'ws') + '/ws';
 const POLL_INTERVAL_MS = 5000;

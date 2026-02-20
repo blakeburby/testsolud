@@ -73,19 +73,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware - restrict to known frontend origins
-# Set CORS_ORIGINS env var as comma-separated list, e.g.:
-#   CORS_ORIGINS=https://testsolud.vercel.app,https://your-custom-domain.com
+# CORS middleware
+# Explicit origins from CORS_ORIGINS env var (comma-separated) take priority.
+# Always allows localhost for local dev and all *.vercel.app preview/prod URLs.
 import os as _os
 _raw_origins = _os.environ.get("CORS_ORIGINS", "")
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-# Fallback: allow localhost in development only
 if not _allowed_origins:
-    _allowed_origins = ["http://localhost:8080", "http://localhost:3000"]
+    _allowed_origins = [
+        "http://localhost:8080",
+        "http://localhost:3000",
+        "https://testsolud-v1-production.up.railway.app",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    # Accept any *.vercel.app subdomain (covers preview and production deployments)
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
