@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from models.trade import Trade, TradeStatus, TradeSide, OrderType
 from models.strategy import StrategySignal
+from models.market import MarketStatus
 from trading_engine.kalshi_client import KalshiClient
 from trading_engine.risk_manager import RiskManager
 from utils.logger import get_logger
@@ -361,6 +362,7 @@ class OrderManager:
     async def _poll_active_orders(self):
         """Poll Kalshi for each active order's current status."""
         if self.dry_run:
+            await self._simulate_paper_fills()
             return
 
         for trade_id, trade in list(self.active_orders.items()):
@@ -418,12 +420,84 @@ class OrderManager:
         if trade.filled_quantity and trade.average_fill_price:
             trade.cost = trade.filled_quantity * trade.average_fill_price
 
+    async def _simulate_paper_fills(self):
+        """
+        Paper-trading: after a 2-second queue delay, mark PENDING dry_run orders
+        as FILLED at their limit price so position tracking and P&L work correctly.
+        """
+        for trade_id, trade in list(self.active_orders.items()):
+            if trade.status != TradeStatus.PENDING or not trade.dry_run:
+                continue
+            age = (datetime.utcnow() - (trade.submitted_at or trade.created_at)).total_seconds()
+            if age < 2.0:
+                continue
+
+            fill_price = trade.price if trade.price and trade.price > 0 else 0.5
+            trade.status = TradeStatus.FILLED
+            trade.filled_at = datetime.utcnow()
+            trade.filled_quantity = trade.quantity
+            trade.average_fill_price = fill_price
+            trade.cost = (trade.filled_quantity or 0) * fill_price
+            trade.pnl = None  # determined at settlement when contract resolves
+
+            self.risk_manager.record_trade(trade)
+            self._move_to_completed(trade_id)
+            logger.info(
+                f"[PAPER] Simulated fill: {trade.side.value.upper()} "
+                f"{trade.filled_quantity} on {trade.ticker} @ {fill_price:.3f}"
+            )
+
+    async def _settle_paper_positions(self):
+        """
+        Paper-trading: for each open position, fetch the market from Kalshi
+        (read-only, always safe) and settle once it resolves.
+
+        Settlement P&L:
+          YES holder — market resolves YES: gain = (1 − entry) × qty
+          YES holder — market resolves NO:  loss = −entry × qty
+          NO  holder — market resolves NO:  gain = (1 − entry) × qty
+          NO  holder — market resolves YES: loss = −entry × qty
+        """
+        for ticker, pos in list(self.risk_manager.positions.items()):
+            try:
+                market = await self.kalshi_client.get_market(ticker)
+                if market.status not in (MarketStatus.CLOSED, MarketStatus.SETTLED):
+                    continue
+
+                yes_price = market.yes_price
+                if yes_price is None:
+                    continue
+
+                if yes_price >= 0.99:
+                    resolved_yes = True
+                elif yes_price <= 0.01:
+                    resolved_yes = False
+                else:
+                    continue  # still mid-settlement
+
+                entry = pos.average_entry_price
+                qty = pos.quantity
+                if pos.side == TradeSide.YES:
+                    pnl = (1.0 - entry) * qty if resolved_yes else -entry * qty
+                else:
+                    pnl = (1.0 - entry) * qty if not resolved_yes else -entry * qty
+
+                self.risk_manager.close_position(ticker, pnl)
+                outcome = "YES" if resolved_yes else "NO"
+                logger.info(
+                    f"[PAPER] Settled {ticker}: resolved {outcome} → "
+                    f"P&L ${pnl:+.2f} ({pos.side.value} ×{qty} @ {entry:.3f})"
+                )
+            except Exception as exc:
+                logger.error(f"Paper settlement check failed for {ticker}: {exc}")
+
     async def _reconcile_fills(self):
         """
         Poll /portfolio/fills since last check to catch any fills
         that were missed by order status polling.
         """
         if self.dry_run:
+            await self._settle_paper_positions()
             return
 
         now_ts = int(datetime.utcnow().timestamp())
