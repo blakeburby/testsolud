@@ -117,7 +117,6 @@ class OrderManager:
             executed = await self.kalshi_client.place_order(
                 ticker=trade.ticker,
                 side=trade.side,
-                action="buy",
                 quantity=trade.quantity,
                 order_type=trade.order_type,
                 price=trade.price,
