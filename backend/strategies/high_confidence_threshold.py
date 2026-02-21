@@ -2,11 +2,11 @@
 High-Confidence Threshold Strategy — YES and NO contracts
 
 Trades Kalshi 15-minute SOL/USD binary markets in BOTH directions when the
-Monte Carlo model reaches ≥95% conviction on one side and the market is
+Monte Carlo model reaches ≥90% conviction on one side and the market is
 pricing it meaningfully wrong.
 
 Entry Conditions (ALL must be met):
-1. Model conviction ≥ 95%  (p_true ≥ 0.95 for YES, ≤ 0.05 for NO)
+1. Model conviction ≥ 90%  (p_true ≥ 0.90 for YES, ≤ 0.10 for NO)
 2. Edge ≥ 5%               (model_prob − market_price on the chosen side)
 3. Time window: 30 s – 10 min remaining
 4. No volatility spike     (current EWMA vol < 2× recent average)
