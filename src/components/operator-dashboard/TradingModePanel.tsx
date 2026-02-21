@@ -16,13 +16,6 @@ interface ModeConfig {
 }
 
 const MODES: Record<TradingMode, ModeConfig> = {
-  dry_run: {
-    label: 'DRY RUN',
-    description: 'No orders sent. Signals logged only.',
-    badgeClass: 'bg-red-500/20 text-red-400 border-red-500/40',
-    icon: <TestTube className="w-4 h-4" />,
-    ringClass: 'ring-red-500/60',
-  },
   paper: {
     label: 'PAPER',
     description: 'Simulated fills. No real money.',
