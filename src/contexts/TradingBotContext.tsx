@@ -185,7 +185,7 @@ export function TradingBotProvider({ children }: { children: React.ReactNode }) 
     connected: false,
     wsError: null,
     status: null,
-    mode: 'dry_run',
+    mode: 'paper',
     health: null,
     balance: null,
     activeTrades: [],
