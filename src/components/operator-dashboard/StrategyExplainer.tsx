@@ -59,8 +59,8 @@ export function StrategyExplainer() {
           <div className="space-y-2.5 pt-0.5">
             <Condition
               n={1}
-              label="Model conviction ≥ 95%"
-              detail="The model must give at least 95% probability that SOL finishes above the strike (YES bet) or at most 5% — meaning ≥ 95% implied NO probability (NO bet). Below that the uncertainty is too wide."
+              label="Model conviction ≥ 90%"
+              detail="The model must give at least 90% probability that SOL finishes above the strike (YES bet) or at most 10% — meaning ≥ 90% implied NO probability (NO bet). Below that the uncertainty is too wide."
             />
             <Condition
               n={2}
