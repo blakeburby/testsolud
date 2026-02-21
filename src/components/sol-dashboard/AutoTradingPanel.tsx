@@ -159,7 +159,7 @@ export function AutoTradingPanel() {
               <h3 className="text-lg font-semibold">Auto Trading Bot</h3>
               <p className="text-sm text-muted-foreground">
                 {connected ? 'Connected' : 'Disconnected'}
-                {status?.dry_run && ' • DRY RUN MODE'}
+                {status?.dry_run && ' • PAPER MODE'}
               </p>
             </div>
           </div>
