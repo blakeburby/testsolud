@@ -276,10 +276,17 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
         """
         implied_no_prob = 1.0 - true_prob
         if implied_no_prob < self.min_probability:
+            self.logger.debug(
+                f"{market.ticker}: NO rejected — implied_no={implied_no_prob:.1%} < threshold={self.min_probability:.0%}"
+            )
             return None
 
         edge = implied_no_prob - no_price
         if edge < self.min_edge:
+            self.logger.debug(
+                f"{market.ticker}: NO rejected — edge={edge:.1%} < min={self.min_edge:.0%} "
+                f"(implied_no={implied_no_prob:.1%}, market={no_price:.1%})"
+            )
             return None
 
         quantity = self._calculate_position_size(
