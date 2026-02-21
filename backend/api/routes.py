@@ -430,7 +430,7 @@ async def set_trading_mode(
             raise HTTPException(status_code=400, detail="confirmed_bankroll required for live mode")
         bot.dry_run = False
         bot.order_manager.dry_run = False
-    else:
+    else:  # paper
         bot.dry_run = True
         bot.order_manager.dry_run = True
     return {
