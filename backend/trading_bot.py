@@ -251,10 +251,7 @@ class TradingBot:
                             # Execute signal
                             trade = await self.order_manager.execute_signal(signal)
 
-                            if trade and trade.status not in (
-                                __import__("models.trade", fromlist=["TradeStatus"]).TradeStatus.FAILED,
-                                __import__("models.trade", fromlist=["TradeStatus"]).TradeStatus.REJECTED,
-                            ):
+                            if trade and trade.status not in (TradeStatus.FAILED, TradeStatus.REJECTED):
                                 logger.info(f"✅ Trade submitted: {trade.trade_id} [{trade.status.value}]")
                             elif trade:
                                 logger.error(
