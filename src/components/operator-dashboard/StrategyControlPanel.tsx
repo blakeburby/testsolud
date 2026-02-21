@@ -1,16 +1,11 @@
 /**
- * StrategyControlPanel — enable/disable strategies, tune thresholds, view signals.
+ * StrategyControlPanel — read-only live view of active strategies and signals.
  */
 
-import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
 import { TrendingUp, TrendingDown, Cpu } from 'lucide-react';
-import { useTradingBotState, useTradingBotActions } from '@/contexts/TradingBotContext';
-import { useToast } from '@/hooks/use-toast';
+import { useTradingBotState } from '@/contexts/TradingBotContext';
 
 function strengthColor(s: string) {
   if (s === 'high') return 'bg-green-500/20 text-green-400 border-green-500/30';
@@ -20,29 +15,6 @@ function strengthColor(s: string) {
 
 export function StrategyControlPanel() {
   const { strategies, recentSignals } = useTradingBotState();
-  const { enableStrategy, disableStrategy } = useTradingBotActions();
-  const { toast } = useToast();
-
-  const [busy, setBusy] = useState<string | null>(null);
-  const [confidenceThreshold, setConfidenceThreshold] = useState(90);
-  const [volFilter, setVolFilter] = useState(true);
-
-  const toggleStrategy = async (name: string, currentlyEnabled: boolean) => {
-    setBusy(name);
-    try {
-      if (currentlyEnabled) {
-        await disableStrategy(name);
-        toast({ title: `Strategy disabled: ${name}` });
-      } else {
-        await enableStrategy(name);
-        toast({ title: `Strategy enabled: ${name}` });
-      }
-    } catch (err) {
-      toast({ title: 'Toggle failed', description: String(err), variant: 'destructive' });
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const latestSignal = recentSignals[0];
 
@@ -51,12 +23,12 @@ export function StrategyControlPanel() {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
           <Cpu className="w-4 h-4" />
-          Strategy Control
+          Strategy Monitor
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
 
-        {/* Strategy toggles */}
+        {/* Strategy status list */}
         {strategies.length === 0 ? (
           <p className="text-sm text-muted-foreground">No strategies loaded</p>
         ) : (
@@ -73,47 +45,15 @@ export function StrategyControlPanel() {
                     {s.last_signal_time && ` · Last: ${new Date(s.last_signal_time).toLocaleTimeString()}`}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    className={`text-xs border ${s.enabled ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-muted/30 text-muted-foreground border-border/30'}`}
-                  >
-                    {s.enabled ? 'ON' : 'OFF'}
-                  </Badge>
-                  <Switch
-                    checked={s.enabled}
-                    disabled={busy === s.name}
-                    onCheckedChange={() => toggleStrategy(s.name, s.enabled)}
-                  />
-                </div>
+                <Badge
+                  className={`text-xs border ${s.enabled ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-muted/30 text-muted-foreground border-border/30'}`}
+                >
+                  {s.enabled ? 'ACTIVE' : 'INACTIVE'}
+                </Badge>
               </div>
             ))}
           </div>
         )}
-
-        {/* Threshold sliders */}
-        <div className="space-y-3 pt-1 border-t border-border/30">
-          <div>
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-muted-foreground">Min confidence threshold</span>
-              <span className="font-mono font-medium">{confidenceThreshold}%</span>
-            </div>
-            <Slider
-              min={60}
-              max={99}
-              step={1}
-              value={[confidenceThreshold]}
-              onValueChange={([v]) => setConfidenceThreshold(v)}
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">Volatility filter</p>
-              <p className="text-xs text-muted-foreground/60">Skip signals during vol spikes</p>
-            </div>
-            <Switch checked={volFilter} onCheckedChange={setVolFilter} />
-          </div>
-        </div>
 
         {/* Latest signal display */}
         {latestSignal ? (
