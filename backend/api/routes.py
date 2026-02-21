@@ -420,8 +420,8 @@ async def set_trading_mode(
     req: TradingModeRequest,
     bot: TradingBot = Depends(get_trading_bot),
 ) -> Dict:
-    if req.mode not in ("dry_run", "paper", "live"):
-        raise HTTPException(status_code=400, detail="mode must be dry_run | paper | live")
+    if req.mode not in ("paper", "live"):
+        raise HTTPException(status_code=400, detail="mode must be paper | live")
     if req.mode == "live":
         if not req.risk_acknowledged:
             raise HTTPException(status_code=400, detail="risk_acknowledged must be true to enable live trading")
