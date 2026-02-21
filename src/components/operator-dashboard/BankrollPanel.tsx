@@ -96,11 +96,11 @@ export function BankrollPanel() {
         {/* Config snapshot (read-only) */}
         {data && (
           <div className="rounded border border-border/40 p-3 bg-muted/20 space-y-1">
-            <p className="text-xs font-medium text-muted-foreground mb-2">Backend Config</p>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Risk Limits</p>
             {[
               ['Bankroll', `$${fmt(data.bankroll)}`],
-              ['Max Position', `$${fmt(data.max_position_size)}`],
-              ['Max Daily Loss', `$${fmt(data.max_daily_loss)}`],
+              ['Max Position (2%)', `$${fmt(data.max_position_size)}`],
+              ['Max Daily Loss (5%)', `$${fmt(data.max_daily_loss)}`],
               ['Kelly Fraction', `${(data.kelly_fraction * 100).toFixed(0)}%`],
             ].map(([label, value]) => (
               <div key={label} className="flex justify-between text-xs">
