@@ -37,7 +37,7 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
         # ── Threshold parameters ──────────────────────────────────────────────
         # For YES: p_true ≥ min_probability
         # For NO:  p_true ≤ (1 − min_probability)  →  implied NO prob ≥ 95%
-        self.min_probability: float = params.get("min_probability_threshold", 0.95)
+        self.min_probability: float = params.get("min_probability_threshold", 0.90)
         self.min_edge: float = params.get("min_edge_threshold", 0.05)
 
         # ── Time window ───────────────────────────────────────────────────────
