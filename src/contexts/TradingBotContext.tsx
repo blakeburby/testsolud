@@ -226,7 +226,7 @@ export function TradingBotProvider({ children }: { children: React.ReactNode }) 
       setState(prev => ({
         ...prev,
         status: data,
-        mode: data.dry_run ? 'dry_run' : 'live',
+        mode: data.dry_run ? 'paper' : 'live',
         activeTrades: [], // refreshed separately
       }));
     } catch (_) { /* swallow — WS is primary */ }
@@ -281,7 +281,7 @@ export function TradingBotProvider({ children }: { children: React.ReactNode }) 
             setState(prev => ({
               ...prev,
               status: msg.data,
-              mode: msg.data?.dry_run ? 'dry_run' : 'live',
+              mode: msg.data?.dry_run ? 'paper' : 'live',
             }));
             break;
           case 'trading_signal':
