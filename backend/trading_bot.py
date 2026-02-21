@@ -144,7 +144,7 @@ class TradingBot:
                 )
 
                 if not markets:
-                    logger.debug("No active markets found")
+                    logger.info("No KXSOL15M markets returned from Kalshi — waiting 10s")
                     await asyncio.sleep(10)
                     continue
 
@@ -152,7 +152,9 @@ class TradingBot:
                 tradeable_markets = [m for m in markets if m.is_tradeable]
 
                 if not tradeable_markets:
-                    logger.debug("No tradeable markets found")
+                    logger.info(
+                        f"Found {len(markets)} KXSOL15M markets but none tradeable — waiting 10s"
+                    )
                     await asyncio.sleep(10)
                     continue
 
@@ -160,7 +162,9 @@ class TradingBot:
                 active_markets = [m for m in tradeable_markets if m.is_active]
 
                 if not active_markets:
-                    logger.debug("No active markets in current 15-min window")
+                    logger.info(
+                        f"{len(tradeable_markets)} tradeable markets, none in current 15-min window — waiting 5s"
+                    )
                     await asyncio.sleep(5)
                     continue
 
