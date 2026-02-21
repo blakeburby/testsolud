@@ -442,5 +442,5 @@ async def set_trading_mode(
 
 @router.get("/mode")
 async def get_trading_mode(bot: TradingBot = Depends(get_trading_bot)) -> Dict:
-    mode = "dry_run" if bot.dry_run else "live"
+    mode = "paper" if bot.dry_run else "live"
     return {"mode": mode, "dry_run": bot.dry_run}
