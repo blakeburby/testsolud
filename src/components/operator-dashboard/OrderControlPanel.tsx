@@ -66,7 +66,7 @@ export function OrderControlPanel() {
                     </span>
                     <span className="text-xs text-muted-foreground">{age(trade.submitted_at)}</span>
                     {trade.dry_run && (
-                      <span className="text-xs text-yellow-500/70">[dry]</span>
+                      <span className="text-xs text-yellow-500/70">[paper]</span>
                     )}
                   </div>
                 </div>

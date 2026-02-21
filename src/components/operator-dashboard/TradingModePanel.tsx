@@ -34,7 +34,7 @@ const MODES: Record<TradingMode, ModeConfig> = {
 
 export function TradingModePanel() {
   const { mode } = useTradingBotState();
-  const currentMode = MODES[mode] ?? MODES.dry_run;
+  const currentMode = MODES[mode] ?? MODES.paper;
 
   return (
     <Card className="border border-border/60">
