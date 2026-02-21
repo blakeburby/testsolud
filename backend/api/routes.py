@@ -334,15 +334,15 @@ async def update_bankroll(
 async def get_bankroll(bot: TradingBot = Depends(get_trading_bot)) -> Dict:
     rm = bot.risk_manager
     metrics = rm.get_metrics()
+    strategy = bot.strategies[0] if bot.strategies else None
     return {
         "bankroll": rm.bankroll,
-        "max_position_size": rm.config.max_position_size,
-        "max_daily_loss": rm.config.max_daily_loss,
+        # Derived from live bankroll × the percent gates the risk manager actually enforces
+        "max_position_size": rm.bankroll * rm.config.position_ceiling_pct,          # Gate 2: 2% of live balance
+        "max_daily_loss": rm.bankroll * rm.config.circuit_breaker_loss_threshold,   # Gate 4: 5% of live balance
         "max_concurrent_positions": rm.config.max_concurrent_positions,
-        "kelly_fraction": (
-            getattr(getattr(bot.strategies[0], "config", None), "kelly_fraction", 0.25)
-            if bot.strategies else 0.25
-        ),
+        # strategy.kelly_fraction is the instance attribute (0.15); config.kelly_fraction is ignored by the strategy
+        "kelly_fraction": getattr(strategy, "kelly_fraction", 0.15) if strategy else 0.15,
         "total_exposure": metrics.total_exposure,
         "remaining_capacity": max(0.0, rm.bankroll - metrics.total_exposure),
         "daily_pnl": metrics.daily_pnl,
