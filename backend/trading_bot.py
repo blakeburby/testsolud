@@ -8,6 +8,7 @@ import httpx
 
 from models.config import TradingConfig, StrategyConfig
 from models.market import Market
+from models.trade import TradeStatus
 from trading_engine.kalshi_client import KalshiClient
 from trading_engine.order_manager import OrderManager
 from trading_engine.risk_manager import RiskManager
