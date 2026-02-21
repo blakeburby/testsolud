@@ -250,8 +250,16 @@ class TradingBot:
                             # Execute signal
                             trade = await self.order_manager.execute_signal(signal)
 
-                            if trade:
-                                logger.info(f"✅ Trade executed: {trade.trade_id}")
+                            if trade and trade.status not in (
+                                __import__("models.trade", fromlist=["TradeStatus"]).TradeStatus.FAILED,
+                                __import__("models.trade", fromlist=["TradeStatus"]).TradeStatus.REJECTED,
+                            ):
+                                logger.info(f"✅ Trade submitted: {trade.trade_id} [{trade.status.value}]")
+                            elif trade:
+                                logger.error(
+                                    f"❌ Trade FAILED: {trade.ticker} {signal.direction.value} "
+                                    f"— {trade.notes or 'no details'}"
+                                )
 
                     except Exception as e:
                         logger.error(f"Error in strategy {strategy.name}: {e}", exc_info=True)
