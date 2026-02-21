@@ -77,9 +77,9 @@ export function SystemHealthPanel() {
             detail={health?.bot_running ? 'running' : 'stopped'}
           />
           <HealthRow
-            label="Dry run mode"
-            ok={health?.dry_run_mode ?? true}
-            detail={health?.dry_run_mode ? 'dry run' : 'LIVE'}
+            label="Trading mode"
+            ok={true}
+            detail={health?.dry_run_mode ? 'PAPER' : 'LIVE'}
           />
           <HealthRow
             label="Circuit breaker"
