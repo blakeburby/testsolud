@@ -21,7 +21,7 @@ import React, {
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type TradingMode = 'dry_run' | 'paper' | 'live';
+export type TradingMode = 'paper' | 'live';
 
 export interface RiskMetrics {
   total_positions: number;
