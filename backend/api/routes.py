@@ -423,11 +423,6 @@ async def set_trading_mode(
     if req.mode not in ("paper", "live"):
         raise HTTPException(status_code=400, detail="mode must be paper | live")
     if req.mode == "live":
-        if not req.risk_acknowledged:
-            raise HTTPException(status_code=400, detail="risk_acknowledged must be true to enable live trading")
-        bankroll_value: float = req.confirmed_bankroll or 0.0
-        if bankroll_value <= 0:
-            raise HTTPException(status_code=400, detail="confirmed_bankroll required for live mode")
         bot.dry_run = False
         bot.order_manager.dry_run = False
     else:  # paper
