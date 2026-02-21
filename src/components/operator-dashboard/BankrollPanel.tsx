@@ -2,7 +2,7 @@
  * BankrollPanel — read-only live capital snapshot from backend.
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DollarSign } from 'lucide-react';
 import { useTradingBotState } from '@/contexts/TradingBotContext';
