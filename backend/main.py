@@ -48,11 +48,11 @@ async def lifespan(app: FastAPI):
     trading_bot = TradingBot(config)
     set_bot(trading_bot)
 
-    # Auto-start if configured
+    # Auto-start the trading loop on boot
+    logger.info("🚀 Auto-starting trading loop...")
+    await trading_bot.start()
     if not config.dry_run_mode:
         logger.warning("⚠️  DRY RUN MODE IS OFF - REAL TRADING ENABLED")
-        # Uncomment to auto-start:
-        # await trading_bot.start()
 
     logger.info("✅ Trading bot API ready")
 
