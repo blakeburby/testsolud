@@ -17,6 +17,9 @@ from utils.logger import setup_logger, get_logger
 
 logger = get_logger(__name__)
 
+# How often (in trading-loop iterations) to resync bankroll from Kalshi (~60s at 1s/iter)
+_BANKROLL_SYNC_INTERVAL = 60
+
 
 class TradingBot:
     """
@@ -24,12 +27,6 @@ class TradingBot:
     """
 
     def __init__(self, config: TradingConfig):
-        """
-        Initialize trading bot.
-
-        Args:
-            config: Trading configuration
-        """
         self.config = config
         self.dry_run = config.dry_run_mode
 
@@ -57,7 +54,7 @@ class TradingBot:
             demo_mode=config.kalshi_demo_mode,
         )
 
-        self.risk_manager = RiskManager(config.risk)
+        self.risk_manager = RiskManager(config.risk, bankroll=config.default_bankroll)
         self.order_manager = OrderManager(
             kalshi_client=self.kalshi_client,
             risk_manager=self.risk_manager,
@@ -73,6 +70,7 @@ class TradingBot:
         self._main_task: Optional[asyncio.Task] = None
         self._active_market: Optional[Market] = None
         self._price_history: List[dict] = []
+        self._loop_iteration: int = 0
 
         logger.info(f"Trading bot initialized with {len(self.strategies)} strategies")
 
@@ -94,6 +92,41 @@ class TradingBot:
             self.strategies.append(strategy)
             logger.info(f"Loaded strategy: {strategy_name}")
 
+    async def _sync_bankroll(self) -> None:
+        """
+        Fetch live Kalshi account balance and update bankroll for all components.
+
+        Uses available cash (not portfolio value) so risk limits are calibrated
+        to real deployable capital. Falls back to the configured default on error.
+        """
+        try:
+            data = await self.kalshi_client.get_balance()
+            cash_cents = data.get("balance", 0)
+            if cash_cents <= 0:
+                logger.warning("Kalshi balance returned 0 or missing — keeping current bankroll")
+                return
+
+            live_bankroll = cash_cents / 100  # cents → dollars
+
+            # Update risk manager
+            old = self.risk_manager.bankroll
+            self.risk_manager.bankroll = live_bankroll
+            if self.risk_manager.peak_equity < live_bankroll:
+                self.risk_manager.peak_equity = live_bankroll
+
+            # Update all strategy configs
+            for strategy in self.strategies:
+                strategy.config.bankroll = live_bankroll
+
+            if abs(live_bankroll - old) > 0.01:
+                logger.info(
+                    f"💰 Bankroll synced from Kalshi: ${live_bankroll:,.2f} "
+                    f"(was ${old:,.2f})"
+                )
+
+        except Exception as e:
+            logger.warning(f"Bankroll sync failed — keeping current value: {e}")
+
     async def start(self):
         """Start the trading bot."""
         if self.running:
@@ -101,6 +134,9 @@ class TradingBot:
             return
 
         self.running = True
+
+        # Sync bankroll from live Kalshi account before starting
+        await self._sync_bankroll()
 
         # Start order monitoring
         await self.order_manager.start_monitoring()
@@ -137,6 +173,12 @@ class TradingBot:
 
         while self.running:
             try:
+                self._loop_iteration += 1
+
+                # Periodically resync bankroll from Kalshi (~every 60s)
+                if self._loop_iteration % _BANKROLL_SYNC_INTERVAL == 0:
+                    await self._sync_bankroll()
+
                 # 1. Discover active markets
                 markets = await self.kalshi_client.get_markets(
                     series_ticker="KXSOL15M",
