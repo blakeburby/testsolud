@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { AlertTriangle, ShieldCheck, TestTube } from 'lucide-react';
+import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import { useTradingBotState, type TradingMode } from '@/contexts/TradingBotContext';
 
 interface ModeConfig {
