@@ -200,10 +200,17 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
         Edge = model_probability − YES_market_price.
         """
         if true_prob < self.min_probability:
+            self.logger.debug(
+                f"{market.ticker}: YES rejected — model={true_prob:.1%} < threshold={self.min_probability:.0%}"
+            )
             return None
 
         edge = true_prob - yes_price
         if edge < self.min_edge:
+            self.logger.debug(
+                f"{market.ticker}: YES rejected — edge={edge:.1%} < min={self.min_edge:.0%} "
+                f"(model={true_prob:.1%}, market={yes_price:.1%})"
+            )
             return None
 
         quantity = self._calculate_position_size(
