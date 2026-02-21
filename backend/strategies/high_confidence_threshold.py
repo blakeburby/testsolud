@@ -127,6 +127,9 @@ class HighConfidenceThresholdStrategy(BaseStrategy):
             no_price = 1.0 - yes_price
 
         if len(price_history) < self.min_samples:
+            self.logger.debug(
+                f"{market.ticker}: waiting for price history ({len(price_history)}/{self.min_samples} samples)"
+            )
             return None
 
         # ── 2. Volatility ─────────────────────────────────────────────────────
